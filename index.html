@@ -2252,7 +2252,18 @@ const Mod_router = (function(){
   
   function navigate(name, params = {}) {
     const query = Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "";
-    window.location.hash = `#/${name}${query}`;
+    const next = `#/${name}${query}`;
+    // Setting location.hash to the SAME value it already is does not fire a "hashchange" event
+    // (browser behaviour - only actual changes fire it), so renderCurrent() would silently never
+    // re-run and the screen would keep showing whatever was rendered last time this route was
+    // visited - e.g. still-dummy data from the very first visit to "Peta" even after a real Google
+    // Sheets pull, if the user happens to navigate back to a route whose hash didn't change. Force
+    // a fresh render in that case instead of relying on the event.
+    if (window.location.hash === next) {
+      renderCurrent();
+    } else {
+      window.location.hash = next;
+    }
   }
   
   function parseHash() {
@@ -2945,9 +2956,12 @@ const Mod_views_mapView = (function(){
   const {Store, KEYS} = Mod_store;
   const {buildCustomerModels, filterQualified} = Mod_scoring;
   const {createMapEngine} = Mod_mapEngine;
-  const {formatDate, daysAgo, escapeHtml} = Mod_format;
+  const {formatDate, formatDateTime, daysAgo, escapeHtml} = Mod_format;
   const {openCustomerDetail} = Mod_views_customerDetail;
   const {PETUGAS_SEED} = Mod_dummyData;
+  const {isGoogleConfigured, pullAllData, requestAccessToken} = Mod_google_sheetsApi;
+  const {pullTeamProgres} = Mod_offlineQueue;
+  const {toast} = Mod_views_shell;
   
   const state = {
     search: "",
@@ -3051,6 +3065,12 @@ const Mod_views_mapView = (function(){
         <div class="map-sidebar">
           <div class="map-search">
             <input type="text" id="mapSearch" placeholder="Cari nama / ID pelanggan / alamat..." value="${escapeHtml(state.search)}" />
+          </div>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+            <button class="btn secondary" id="mapSyncBtn" style="flex-shrink:0;" ${isGoogleConfigured() ? "" : "disabled"} title="${isGoogleConfigured() ? "Tarik data terbaru dari Google Sheets & langsung perbarui peta ini" : "Atur Client ID & Spreadsheet ID di Setelan dulu"}">
+              ${icon("sync")} Sinkron Data
+            </button>
+            <span class="small-muted" id="mapSyncStatus">${Store.get("lastPull", null) ? `Terakhir sinkron: ${formatDateTime(Store.get("lastPull", null))}` : "Belum pernah sinkron"}</span>
           </div>
           <div class="chip-row" id="chipRow">
             <button class="chip all ${state.subKategori === "semua" ? "active" : ""}" data-cat="semua">Semua</button>
@@ -3178,6 +3198,34 @@ const Mod_views_mapView = (function(){
       engine.renderer.setMode(state.mapMode);
       if (res.kind === "custom") root.querySelector("#offlineMapNote").classList.remove("hidden");
       refreshList();
+    });
+  
+    const syncBtn = root.querySelector("#mapSyncBtn");
+    syncBtn.addEventListener("click", async () => {
+      const statusEl = root.querySelector("#mapSyncStatus");
+      syncBtn.disabled = true;
+      const originalLabel = syncBtn.innerHTML;
+      syncBtn.innerHTML = `${icon("sync")} Menyinkron...`;
+      try {
+        await requestAccessToken();
+        const { identitas, pemakaian } = await pullAllData();
+        Store.set(KEYS.IDENTITAS, identitas);
+        Store.set(KEYS.PEMAKAIAN, pemakaian);
+        // Fold in teammates' latest status-probing updates too, same as the Import Data screen,
+        // so this button is a genuine one-stop "get everything current" action from the map itself.
+        const { updated } = await pullTeamProgres();
+        Store.set("lastPull", new Date().toISOString());
+        toast(`Data berhasil disinkron${updated ? ` · ${updated} update tim digabungkan` : ""}.`, "ok");
+        // Re-render the whole view in place - same pattern already used by the filter chips above -
+        // so the map/list/route&tarif dropdowns all immediately reflect the freshly-pulled data
+        // without needing to leave this screen or navigate away and back.
+        renderMapView(root);
+      } catch (e) {
+        toast("Gagal sinkron: " + e.message, "err");
+        syncBtn.disabled = false;
+        syncBtn.innerHTML = originalLabel;
+        if (statusEl) statusEl.textContent = "Sinkron gagal - coba lagi.";
+      }
     });
   
     root.querySelector("#mapSearch").addEventListener("input", (e) => { state.search = e.target.value; refreshList(); });
