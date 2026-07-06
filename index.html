@@ -628,6 +628,7 @@ const Mod_store = (function(){
     THEME: "theme",
     REGIONS: "regions",
     SEEDED: "seeded",
+    DATA_SOURCE: "dataSource", // "real" (from a successful Google Sheets pull) | "dummy" (sample data) | null (never loaded)
   };
   
   return {Store, KEYS};
@@ -3066,11 +3067,14 @@ const Mod_views_mapView = (function(){
           <div class="map-search">
             <input type="text" id="mapSearch" placeholder="Cari nama / ID pelanggan / alamat..." value="${escapeHtml(state.search)}" />
           </div>
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
             <button class="btn secondary" id="mapSyncBtn" style="flex-shrink:0;" ${isGoogleConfigured() ? "" : "disabled"} title="${isGoogleConfigured() ? "Tarik data terbaru dari Google Sheets & langsung perbarui peta ini" : "Atur Client ID & Spreadsheet ID di Setelan dulu"}">
               ${icon("sync")} Sinkron Data
             </button>
             <span class="small-muted" id="mapSyncStatus">${Store.get("lastPull", null) ? `Terakhir sinkron: ${formatDateTime(Store.get("lastPull", null))}` : "Belum pernah sinkron"}</span>
+          </div>
+          <div style="display:inline-block; margin-bottom:8px; padding:3px 9px; border-radius:999px; font-weight:700; font-size:11.5px; ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "background:#DCFCE7; color:#166534;" : ds === "dummy" ? "background:#FEF3C7; color:#92400E;" : "background:#F1F5F9; color:#475569;"; })()}">
+            ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "● DATA ASLI" : ds === "dummy" ? "● DATA CONTOH/DUMMY" : "Belum ada data"; })()}
           </div>
           <div class="chip-row" id="chipRow">
             <button class="chip all ${state.subKategori === "semua" ? "active" : ""}" data-cat="semua">Semua</button>
@@ -3215,6 +3219,7 @@ const Mod_views_mapView = (function(){
         // so this button is a genuine one-stop "get everything current" action from the map itself.
         const { updated } = await pullTeamProgres();
         Store.set("lastPull", new Date().toISOString());
+        Store.set(KEYS.DATA_SOURCE, "real");
         toast(`Data berhasil disinkron${updated ? ` · ${updated} update tim digabungkan` : ""}.`, "ok");
         // Re-render the whole view in place - same pattern already used by the filter chips above -
         // so the map/list/route&tarif dropdowns all immediately reflect the freshly-pulled data
@@ -3578,11 +3583,15 @@ const Mod_views_importData = (function(){
     const identitasCount = Store.get(KEYS.IDENTITAS, []).length;
     const pemakaianCount = Store.get(KEYS.PEMAKAIAN, []).length;
     const sampleIdpel = (Store.get(KEYS.IDENTITAS, [])[0] || {}).IDPEL || "-";
+    const dataSource = Store.get(KEYS.DATA_SOURCE, null); // "real" | "dummy" | null
   
     root.innerHTML = `
       <div class="view-pad stack-12">
         <div class="card">
           <div class="card-title">${icon("cloud")} Sumber Data: Google Sheets</div>
+          <div style="display:inline-block; margin-bottom:8px; padding:4px 10px; border-radius:999px; font-weight:700; font-size:12px; ${dataSource === "real" ? "background:#DCFCE7; color:#166534;" : dataSource === "dummy" ? "background:#FEF3C7; color:#92400E;" : "background:#F1F5F9; color:#475569;"}">
+            ${dataSource === "real" ? "● DATA ASLI dari Google Sheets sedang aktif" : dataSource === "dummy" ? "● DATA CONTOH/DUMMY sedang aktif (bukan data asli)" : "Belum ada data dimuat"}
+          </div>
           <p class="small-muted">Google Sheets adalah satu-satunya sumber data identitas &amp; pemakaian pelanggan (PRD 5.6). Aplikasi menarik tab "Data Identitas" &amp; "Data Pemakaian", lalu menulis-balik status probing ke tab "Progres Probing" pada spreadsheet yang sama - tab ini juga ditarik balik supaya update status dari SEMUA petugas yang pakai spreadsheet yang sama ikut tergabung di sini, bukan cuma milik akun ini sendiri.</p>
           <div class="settings-item" style="padding-left:0; padding-right:0;">
             <div>
@@ -3622,7 +3631,8 @@ const Mod_views_importData = (function(){
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn yellow" id="loadDummyBtn">Muat / Reset Data Contoh</button>
           </div>
-          <div class="small-muted" style="margin-top:8px;">Status data saat ini: ${seeded ? "Data contoh aktif" : "Belum ada data"} · Estimasi penyimpanan lokal terpakai: ${Store.estimateUsageKb()} KB</div>
+          <div class="small-muted" style="margin-top:8px;">Status data saat ini: ${dataSource === "dummy" ? "Data contoh aktif" : dataSource === "real" ? "Data contoh TIDAK aktif (data asli sedang dipakai)" : "Belum ada data"} · Estimasi penyimpanan lokal terpakai: ${Store.estimateUsageKb()} KB</div>
+          <div class="small-muted" style="margin-top:4px; color:#92400E;">Hati-hati: tombol di atas akan MENGGANTI data asli yang sudah ditarik dari Google Sheets dengan data contoh - jangan diklik kecuali memang ingin kembali ke data contoh.</div>
         </div>
       </div>
     `;
@@ -3639,6 +3649,7 @@ const Mod_views_importData = (function(){
       Store.set(KEYS.PROGRES, progres);
       Store.set(KEYS.OPERASIONAL, operasional);
       Store.set(KEYS.SEEDED, true);
+      Store.set(KEYS.DATA_SOURCE, "dummy");
       toast("Data contoh dimuat.", "ok");
       renderImportData(root);
     });
@@ -3656,6 +3667,7 @@ const Mod_views_importData = (function(){
         // just what was entered locally.
         const { updated } = await pullTeamProgres();
         Store.set("lastPull", new Date().toISOString());
+        Store.set(KEYS.DATA_SOURCE, "real");
         toast(`Data berhasil ditarik${updated ? ` · ${updated} update tim digabungkan` : ""}.`, "ok");
       } catch (e) {
         toast("Gagal menarik data: " + e.message, "err");
@@ -3922,6 +3934,13 @@ const Mod_views_settings = (function(){
       Store.set(KEYS.PROGRES, progres);
       Store.set(KEYS.OPERASIONAL, operasional);
       Store.set(KEYS.SEEDED, true);
+      Store.set(KEYS.DATA_SOURCE, "dummy");
+    } else if (Store.get(KEYS.DATA_SOURCE, null) === null) {
+      // Local data from before the "DATA ASLI / DATA CONTOH" badge existed has no tag yet - guess
+      // from the best available signal (a recorded "lastPull" timestamp means a Sheets pull
+      // happened at some point) so the badge doesn't wrongly show "Belum ada data" for a device
+      // that's actually been in real use for a while.
+      Store.set(KEYS.DATA_SOURCE, Store.get("lastPull", null) ? "real" : "dummy");
     }
   }
   
