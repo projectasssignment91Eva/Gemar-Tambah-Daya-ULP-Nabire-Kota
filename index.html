@@ -1812,6 +1812,27 @@ const Mod_google_sheetsApi = (function(){
     });
   }
   
+  // The Sheets API returns every cell as a plain string by default (FORMATTED_VALUE), even for
+  // columns that are conceptually numbers (THBLREK, DAYA, PEMKWH, JAMNYALA, coordinates). scoring.js
+  // does arithmetic (+, sum/average) on several of these fields - left as strings, "+" silently
+  // falls back to string concatenation instead of addition (e.g. 0 + "480" + "560" -> "0480560"),
+  // producing wildly wrong/huge scores instead of a clear error. Coerce the known numeric columns
+  // right after pulling so every downstream calculation gets real numbers.
+  const NUMERIC_FIELDS = ["THBLREK", "DAYA", "PEMKWH", "JAMNYALA", "LAT", "LONG", "Latitude", "Longitude"];
+  
+  function coerceNumericFields(rows) {
+    return rows.map((row) => {
+      const out = { ...row };
+      for (const field of NUMERIC_FIELDS) {
+        if (out[field] !== undefined && out[field] !== "" && out[field] !== null) {
+          const n = Number(String(out[field]).replace(/,/g, ""));
+          if (!Number.isNaN(n)) out[field] = n;
+        }
+      }
+      return out;
+    });
+  }
+  
   function objectsToRows(objects, header) {
     return [header, ...objects.map((o) => header.map((h) => (o[h] == null ? "" : o[h])))];
   }
@@ -1824,8 +1845,19 @@ const Mod_google_sheetsApi = (function(){
   
   async function pullAllData() {
     const g = getGoogleConfig();
-    const identitas = await fetchTab(g.tabIdentitas || "Data Identitas");
-    const pemakaian = await fetchTab(g.tabPemakaian || "Data Pemakaian");
+    const identitas = coerceNumericFields(await fetchTab(g.tabIdentitas || "Data Identitas"));
+    const pemakaian = coerceNumericFields(await fetchTab(g.tabPemakaian || "Data Pemakaian"));
+    // A tab name that's slightly off (extra space, different case, sheet renamed) makes the Sheets
+    // API return an empty range rather than an error - values.get on a truly missing tab does 400,
+    // but an existing-but-empty-looking result (e.g. only a header row, or the wrong tab entirely)
+    // silently comes back as 0 rows. Previously this would overwrite local storage with an empty
+    // array with no warning, which - combined with a leftover dummy dataset from before this pull -
+    // is very hard for a non-technical user to tell apart from "the pull silently did nothing".
+    // Fail loudly instead so the success toast can never lie about actually having new data.
+    if (!identitas.length || !pemakaian.length) {
+      const which = !identitas.length && !pemakaian.length ? "\"Data Identitas\" dan \"Data Pemakaian\"" : (!identitas.length ? "\"Data Identitas\"" : "\"Data Pemakaian\"");
+      throw new Error(`Tab ${which} kosong/tidak ditemukan datanya di spreadsheet ini. Pastikan nama tab persis sama dan ada data di bawah baris judul.`);
+    }
     return { identitas, pemakaian };
   }
   
@@ -3492,6 +3524,12 @@ const Mod_views_importData = (function(){
     const seeded = Store.get(KEYS.SEEDED, false);
     const lastPull = Store.get("lastPull", null);
     const pending = pendingCount();
+    // Raw counts + a sample IDPEL, shown directly on this screen so it's possible to tell dummy
+    // data apart from a real pull WITHOUT opening DevTools - just look at the numbers/ID here
+    // before and after clicking "Tarik Data dari Sheets".
+    const identitasCount = Store.get(KEYS.IDENTITAS, []).length;
+    const pemakaianCount = Store.get(KEYS.PEMAKAIAN, []).length;
+    const sampleIdpel = (Store.get(KEYS.IDENTITAS, [])[0] || {}).IDPEL || "-";
   
     root.innerHTML = `
       <div class="view-pad stack-12">
@@ -3510,6 +3548,10 @@ const Mod_views_importData = (function(){
             <button class="btn secondary" id="gotoSettingsBtn">${icon("settings")} Atur Integrasi Google</button>
           </div>
           ${lastPull ? `<div class="small-muted" style="margin-top:8px;">Terakhir ditarik: ${formatDateTime(lastPull)}</div>` : ""}
+          <div class="small-muted" style="margin-top:8px; padding:8px; background:var(--bg-alt,#F2F4F7); border-radius:6px;">
+            Data tersimpan di perangkat ini sekarang: <b>${identitasCount}</b> baris Data Identitas · <b>${pemakaianCount}</b> baris Data Pemakaian · Contoh IDPEL pertama: <b>${sampleIdpel}</b><br/>
+            <span style="opacity:0.8;">Bandingkan angka &amp; ID ini SEBELUM dan SESUDAH menekan "Tarik Data dari Sheets" - kalau tidak berubah sama sekali, berarti data baru belum benar-benar tersimpan.</span>
+          </div>
         </div>
   
         <div class="card">
@@ -3951,4 +3993,3 @@ const Mod_views_settings = (function(){
 </script>
 </body>
 </html>
-
