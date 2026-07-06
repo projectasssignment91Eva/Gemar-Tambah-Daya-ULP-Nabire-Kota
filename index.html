@@ -546,11 +546,88 @@ const Mod_hash = (function(){
 })();
 
 const Mod_store = (function(){
-  // Lightweight persisted store with pub/sub, backed by localStorage.
+  // Lightweight persisted store with pub/sub, backed by localStorage for most keys.
   // Namespaced under "gtd_*" (Gemar Tambah Daya).
+  //
+  // IMPORTANT (found via real-world debugging): a real Google Sheets pull of usage history for a
+  // whole ULP - potentially tens of thousands of "Data Pemakaian" rows across thousands of
+  // customers - easily produces a JSON payload well past the ~5-10MB quota most browsers enforce
+  // PER ORIGIN on localStorage. When that happens, localStorage.setItem() throws a
+  // QuotaExceededError - but Store.set() previously swallowed that (just a console.warn) and still
+  // fired its "value changed" event, so the UI showed a cheerful "Data berhasil ditarik/disinkron"
+  // success toast while the actual write silently no-opped, leaving the PREVIOUS value (which could
+  // be the sample/dummy dataset) in place. That is extremely hard to diagnose from the UI alone,
+  // since nothing about the on-screen success message is wrong - the data underneath it just never
+  // actually saved.
+  //
+  // Fix: IDENTITAS and PEMAKAIAN (the two keys whose size scales with the whole customer base and
+  // its usage history, i.e. the ones actually big enough to hit this) are persisted via IndexedDB
+  // instead, which has a MUCH larger practical quota (commonly hundreds of MB to low GB, tied to
+  // available disk rather than a fixed small per-origin cap). Everything else (settings, progres,
+  // session, etc.) is comfortably small and stays on the simpler synchronous localStorage path.
+  //
+  // To avoid having to make every Store.get()/Store.set() call across the whole app async (dozens
+  // of call sites read these synchronously during render), IndexedDB access is wrapped in an
+  // in-memory mirror: Store.hydrate() loads IDENTITAS/PEMAKAIAN from IndexedDB into memory ONCE at
+  // boot (awaited before the rest of the app starts - see main.js), and after that Store.get/set
+  // for those two keys just read/write the in-memory copy synchronously, persisting to IndexedDB in
+  // the background. The rest of the Store API is unchanged.
   
   const PREFIX = "gtd_";
   const listeners = new Map();
+  
+  // Keys whose size scales with the whole customer base / usage history, and can legitimately grow
+  // past what localStorage can hold for a real (non-sample) dataset.
+  const BIG_KEYS = new Set(["identitas", "pemakaian"]);
+  
+  const DB_NAME = "gtd_bigstore";
+  const DB_VERSION = 1;
+  const OBJECT_STORE = "kv";
+  
+  const bigCache = new Map();
+  let hydrated = false;
+  let dbPromise = null;
+  
+  function openDb() {
+    if (!("indexedDB" in (typeof window !== "undefined" ? window : {}))) return Promise.reject(new Error("IndexedDB not available"));
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(OBJECT_STORE)) req.result.createObjectStore(OBJECT_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return dbPromise;
+  }
+  
+  function idbGet(key) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(OBJECT_STORE, "readonly");
+      const req = tx.objectStore(OBJECT_STORE).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+  
+  function idbSet(key, value) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(OBJECT_STORE, "readwrite");
+      tx.objectStore(OBJECT_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }));
+  }
+  
+  function idbDelete(key) {
+    return openDb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(OBJECT_STORE, "readwrite");
+      tx.objectStore(OBJECT_STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }));
+  }
   
   function readRaw(key) {
     try {
@@ -565,9 +642,11 @@ const Mod_store = (function(){
   function writeRaw(key, value) {
     try {
       localStorage.setItem(PREFIX + key, JSON.stringify(value));
+      return true;
     } catch (e) {
       console.warn("store write failed (quota?)", key, e);
-      emit("__quota_error__", e);
+      emit("__quota_error__", { key, error: e });
+      return false;
     }
   }
   
@@ -578,10 +657,23 @@ const Mod_store = (function(){
   
   const Store = {
     get(key, fallback = null) {
+      if (BIG_KEYS.has(key)) {
+        return bigCache.has(key) ? bigCache.get(key) : fallback;
+      }
       const v = readRaw(key);
       return v === null ? fallback : v;
     },
     set(key, value) {
+      if (BIG_KEYS.has(key)) {
+        bigCache.set(key, value);
+        idbSet(key, value).catch((e) => {
+          console.error("IndexedDB write failed for", key, e);
+          emit("__quota_error__", { key, error: e });
+        });
+        emit(key, value);
+        emit("__any__", { key, value });
+        return;
+      }
       writeRaw(key, value);
       emit(key, value);
       emit("__any__", { key, value });
@@ -598,6 +690,12 @@ const Mod_store = (function(){
       return () => listeners.get(key).delete(cb);
     },
     remove(key) {
+      if (BIG_KEYS.has(key)) {
+        bigCache.delete(key);
+        idbDelete(key).catch(() => {});
+        emit(key, null);
+        return;
+      }
       localStorage.removeItem(PREFIX + key);
       emit(key, null);
     },
@@ -605,13 +703,72 @@ const Mod_store = (function(){
       Object.keys(localStorage)
         .filter((k) => k.startsWith(PREFIX))
         .forEach((k) => localStorage.removeItem(k));
+      bigCache.clear();
+      BIG_KEYS.forEach((k) => idbDelete(k).catch(() => {}));
     },
     estimateUsageKb() {
       let total = 0;
       Object.keys(localStorage)
         .filter((k) => k.startsWith(PREFIX))
         .forEach((k) => { total += (localStorage.getItem(k) || "").length; });
+      for (const key of BIG_KEYS) {
+        if (bigCache.has(key)) {
+          try { total += JSON.stringify(bigCache.get(key)).length; } catch (e) { /* ignore */ }
+        }
+      }
       return Math.round(total / 1024);
+    },
+    // Must be awaited once at boot (before anything reads IDENTITAS/PEMAKAIAN) so the in-memory
+    // mirror is populated from IndexedDB. Also one-time-migrates any pre-existing localStorage
+    // value for these keys into IndexedDB, so a device that was already in use before this fix
+    // shipped doesn't appear to have "lost" its data (its last-successfully-saved copy, dummy or
+    // real, still loads normally - it just moves to the bigger storage backend from here on).
+    async hydrate() {
+      if (hydrated) return;
+      hydrated = true;
+      for (const key of BIG_KEYS) {
+        try {
+          const fromIdb = await idbGet(key);
+          if (fromIdb !== undefined) {
+            bigCache.set(key, fromIdb);
+            continue;
+          }
+        } catch (e) {
+          console.warn("IndexedDB unavailable, falling back to localStorage-only for", key, e);
+        }
+        // No IndexedDB value yet (first run after upgrade, or IndexedDB unsupported/blocked) -
+        // fall back to whatever was last saved under the old localStorage-only scheme, if any.
+        const legacy = readRaw(key);
+        if (legacy !== null) {
+          bigCache.set(key, legacy);
+          idbSet(key, legacy).catch(() => {});
+        }
+      }
+      // Ask the browser to mark this origin's storage as "persistent" - i.e. exempt from the
+      // automatic eviction browsers can perform on ordinary ("best-effort") storage when the
+      // device is low on disk space. Customer usage history is expected to keep growing through
+      // the rest of the year, so this matters more here than for a typical small-data web app.
+      // This is a permission request, not a capacity increase by itself - the actual quota is
+      // still governed by available disk space either way - but it meaningfully lowers the odds
+      // of silent data loss on a shared/low-storage field device. Safe to call every boot; the
+      // browser only prompts/grants once and no-ops after that.
+      try {
+        if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
+      } catch (e) { /* not supported - fine, just skip */ }
+    },
+    // Reports how much of the browser's storage quota is used vs. available, so the app can show
+    // real headroom instead of only reacting after a write fails. Returns null if the browser
+    // doesn't support the estimate API (falls back gracefully - the app still works, just without
+    // this indicator).
+    async estimateQuota() {
+      try {
+        if (!navigator.storage || !navigator.storage.estimate) return null;
+        const { usage, quota } = await navigator.storage.estimate();
+        if (usage == null || quota == null) return null;
+        return { usageBytes: usage, quotaBytes: quota, usagePct: quota ? Math.round((usage / quota) * 1000) / 10 : null };
+      } catch (e) {
+        return null;
+      }
     },
   };
   
@@ -3618,6 +3775,7 @@ const Mod_views_importData = (function(){
             Data tersimpan di perangkat ini sekarang: <b>${identitasCount}</b> baris Data Identitas · <b>${pemakaianCount}</b> baris Data Pemakaian · Contoh IDPEL pertama: <b>${sampleIdpel}</b><br/>
             <span style="opacity:0.8;">Bandingkan angka &amp; ID ini SEBELUM dan SESUDAH menekan "Tarik Data dari Sheets" - kalau tidak berubah sama sekali, berarti data baru belum benar-benar tersimpan.</span>
           </div>
+          <div class="small-muted" id="storageQuotaLine" style="margin-top:6px;">Memeriksa kapasitas penyimpanan perangkat...</div>
         </div>
   
         <div class="card">
@@ -3648,6 +3806,21 @@ const Mod_views_importData = (function(){
   
     root.querySelector("#gotoSettingsBtn").addEventListener("click", () => {
       window.location.hash = "#/settings";
+    });
+  
+    // Storage headroom - shown so a growing dataset (more months of usage history added through
+    // the rest of the year) can be seen coming instead of discovered as a surprise write failure.
+    // Async (navigator.storage.estimate()), so it's filled in after the initial render rather than
+    // blocking it.
+    Store.estimateQuota().then((q) => {
+      const el = root.querySelector("#storageQuotaLine");
+      if (!el) return; // view may have been re-rendered/navigated away already
+      if (!q) { el.textContent = "Kapasitas penyimpanan: tidak dapat diperiksa di browser ini (aplikasi tetap berjalan normal)."; return; }
+      const usageMb = (q.usageBytes / (1024 * 1024)).toFixed(1);
+      const quotaMb = (q.quotaBytes / (1024 * 1024)).toFixed(0);
+      const warn = q.usagePct != null && q.usagePct > 70;
+      el.innerHTML = `Kapasitas penyimpanan perangkat: <b>${usageMb} MB</b> terpakai dari sekitar <b>${quotaMb} MB</b> tersedia (${q.usagePct != null ? q.usagePct + "%" : "?"}).` +
+        (warn ? ` <span style="color:#B45309; font-weight:700;">Sudah cukup penuh - kalau data terus bertambah, pertimbangkan pakai perangkat dengan ruang kosong lebih besar.</span>` : "");
     });
   
     root.querySelector("#loadDummyBtn").addEventListener("click", () => {
@@ -3922,7 +4095,7 @@ const Mod_views_settings = (function(){
 (function(){
   const {Store, KEYS} = Mod_store;
   const {registerRoute, startRouter, navigate} = Mod_router;
-  const {renderShell, applyTheme, refreshShellHeader} = Mod_views_shell;
+  const {renderShell, applyTheme, refreshShellHeader, toast} = Mod_views_shell;
   const {renderLogin} = Mod_views_login;
   const {renderLock} = Mod_views_lock;
   const {renderMapView} = Mod_views_mapView;
@@ -4061,7 +4234,19 @@ const Mod_views_settings = (function(){
     });
   }
   
-  seedDefaultAccounts().then(boot).catch(renderCrashScreen);
+  // A storage write that silently fails (e.g. IndexedDB blocked/full, or a localStorage quota hit
+  // on one of the smaller keys) previously only logged a console.warn - the UI would still show a
+  // cheerful "berhasil" toast on top of data that never actually saved, which is exactly what made
+  // the stale-dummy-data bug so hard to track down. Surface it loudly instead.
+  Store.subscribe("__quota_error__", ({ key }) => {
+    toast(`Gagal menyimpan data "${key}" ke penyimpanan perangkat - kemungkinan penyimpanan penuh. Coba hapus data lain atau pakai perangkat/browser lain.`, "err");
+  });
+  
+  // Store.hydrate() loads IDENTITAS/PEMAKAIAN from IndexedDB into memory before anything else runs -
+  // see store.js for why (localStorage's ~5-10MB quota isn't enough for a real, full-ULP usage
+  // history pull, so those two keys now live in IndexedDB instead). Everything else in the app can
+  // keep calling Store.get/set synchronously as before.
+  Store.hydrate().then(seedDefaultAccounts).then(boot).catch(renderCrashScreen);
   
 })();
 })();
