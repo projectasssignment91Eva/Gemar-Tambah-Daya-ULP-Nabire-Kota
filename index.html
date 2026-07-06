@@ -146,11 +146,23 @@ img { max-width: 100%; }
 
 /* ---- Login / Lock ---- */
 .auth-screen {
-  height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  /* min-height (not a fixed height) + overflow-y:auto, combined with .auth-inner's margin:auto
+     below, is what actually fixes the "top of the login screen gets clipped/cut off on a short
+     phone screen" bug: with a fixed height + justify-content:center + parent overflow:hidden
+     (see #app), content taller than the viewport used to have its TOP silently cut off with no
+     way to scroll up and see it (logo/app name disappearing, only the card staying visible).
+     Now it scrolls instead. */
+  min-height: 100%; overflow-y: auto; display: flex; flex-direction: column; align-items: center;
   background: linear-gradient(180deg, var(--brand-navy), var(--brand-navy-dark));
-  color: #fff; padding: 24px; gap: 18px; text-align: center;
+  color: #fff; padding: 24px; text-align: center;
 }
-.auth-logo { width: 76px; height: 76px; border-radius: 20px; background: var(--brand-yellow); display:flex; align-items:center; justify-content:center; }
+/* margin: auto 0 vertically centers this block when it fits (auto margins share the extra space
+   equally), and gracefully collapses to 0 - falling back to normal top-aligned flow, scrollable
+   via the parent's overflow-y:auto - when the content is taller than the screen. This is the
+   standard fix for the classic "flexbox justify-content:center clips overflowing content"
+   problem, which plain justify-content:center on .auth-screen alone does not solve. */
+.auth-inner { margin: auto 0; display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%; }
+.auth-logo { width: 76px; height: 76px; border-radius: 20px; background: var(--brand-yellow); display:flex; align-items:center; justify-content:center; flex-shrink: 0; }
 .auth-logo svg { width: 44px; height: 44px; }
 .auth-logo.logo-plate { background: #fff; box-shadow: var(--shadow-md); }
 .auth-card {
@@ -165,6 +177,18 @@ img { max-width: 100%; }
   width: 100%; padding: 9px 11px; border-radius: var(--radius-sm); border: 1px solid var(--border);
   background: var(--surface-2); color: var(--text); font-size: 14px;
 }
+/* Wraps a password/PIN input + the "show/hide" eye button together, so the button can be
+   absolutely positioned inside the same box as the input (PRD-adjacent request: PIN field needs
+   a visibility toggle since it's otherwise impossible to double-check what was typed). */
+.field-with-toggle { position: relative; }
+.field-with-toggle input { padding-right: 40px; }
+.field-toggle-btn {
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  background: none; border: none; padding: 0; cursor: pointer; color: var(--text-muted); border-radius: 50%;
+}
+.field-toggle-btn:hover { background: var(--surface-2); color: var(--text); }
+.field-toggle-btn .ico { width: 18px; height: 18px; }
 .pin-dots { display: flex; gap: 10px; justify-content: center; margin: 6px 0 14px; }
 .pin-dots .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); }
 .pin-dots .dot.filled { background: var(--brand-navy); border-color: var(--brand-navy); }
@@ -263,6 +287,16 @@ img { max-width: 100%; }
 [data-theme="dark"] .status-pill.st-bayar { background: rgba(255,255,255,0.1); color: #cfe0f5; }
 .status-pill.st-tidakbisa { background: rgba(122,63,224,0.15); color: var(--status-unsafe); border-color: transparent; }
 .list-footer { padding: 8px 12px; text-align: center; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+/* Page nav for the customer list - icon-only prev/next arrows (no text label) so the whole row
+   fits on one line at typical sidebar widths instead of each button wrapping onto two lines. */
+.pagination-row { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 8px; }
+.page-arrow-btn {
+  width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); font-size: 16px; line-height: 1; cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.page-arrow-btn:hover:not(:disabled) { background: var(--surface-2); }
+.page-arrow-btn:disabled { opacity: 0.4; cursor: default; }
 
 .map-toolbar { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 1100; }
 .map-toolbar button {
@@ -780,6 +814,7 @@ const Mod_store = (function(){
     PEMAKAIAN: "pemakaian",
     PROGRES: "progres",
     OPERASIONAL: "operasional", // { [idpel]: { riwayat: [], photoDataUrl, auditLog: [], coordOverride } }
+    DAYA_UPDATE: "dayaUpdate", // rows from the optional "Update Daya" sheet tab - IDPEL, daya terbaru, tanggal - used to detect customers who already upgraded via a channel outside this app/team
     SETTINGS: "settings",
     QUEUE: "queue",
     THEME: "theme",
@@ -827,6 +862,8 @@ const Mod_icons = (function(){
     edit: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>`,
     lock: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 1 1 8 0v4"/></svg>`,
     reload: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 12a8 8 0 0 1 14.6-4.6M20 12a8 8 0 0 1-14.6 4.6"/><path d="M18 3v5h-5M6 21v-5h5"/></svg>`,
+    eye: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>`,
+    eyeOff: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.6 10.6 0 0 1 12 19c-7 0-11-7-11-7a19.4 19.4 0 0 1 4.2-5.2M9.9 4.2A9.7 9.7 0 0 1 12 4c7 0 11 7 11 7a19.4 19.4 0 0 1-2.2 3M14.1 14.1a3 3 0 1 1-4.2-4.2"/><path d="M1 1l22 22"/></svg>`,
   };
   
   function icon(name, cls = "") {
@@ -925,7 +962,12 @@ const Mod_dummyData = (function(){
   ];
   const PETUGAS_LIST = ["Rudi Hartono", "Sitti Rahma", "Novita Torey", "Melkior Kayame", "Agus Setiawan", "Deby Iryanti"];
   const TARIF_LIST = ["R1/TR", "R1/TR", "R1/TR", "R1M/TR", "B1/TR"];
-  const DAYA_LEVELS = [450, 900, 1300, 2200, 3500];
+  // Kept in sync with costTable.js's POWER_LEVELS - real customers (unlike the sample/dummy set,
+  // which only ever starts at the first 4 tiers) can already be sitting at any real-world tier,
+  // including the higher commercial/industrial ones. If this list stopped short of a real
+  // customer's current DAYA, "next tier up" lookups elsewhere (target daya dropdown, revenue
+  // estimate) would find nothing and fall back incorrectly - see dashboard.js/customerDetail.js.
+  const DAYA_LEVELS = [450, 900, 1300, 2200, 3500, 4400, 5500, 6600, 7700];
   
   const NABIRE_CENTER = { lat: -3.3667, lng: 135.4833 };
   
@@ -1198,10 +1240,34 @@ const Mod_scoring = (function(){
     return den === 0 ? 0 : num / den;
   }
   
-  function buildCustomerModels({ identitas, pemakaian, progres, operasional, settings }) {
+  // The optional "Update Daya" sheet tab lets a petugas/admin log a customer's DAYA the moment they
+  // learn it changed through some channel outside this app/team (self-service via PLN Mobile,
+  // another unit's work, etc.) - much faster than waiting for it to eventually show up in a future
+  // month's "Data Pemakaian" billing row. Multiple rows per IDPEL are allowed (e.g. logged more than
+  // once); only the most recent one per customer matters, picked by "Tanggal Update" when it parses
+  // as a date, otherwise by sheet row order (later row = more recent entry).
+  function latestDayaUpdateByIdpel(dayaUpdate) {
+    const map = new Map();
+    (dayaUpdate || []).forEach((row, i) => {
+      if (!row.IDPEL) return;
+      const existing = map.get(row.IDPEL);
+      if (!existing) { map.set(row.IDPEL, { row, i }); return; }
+      const tNew = Date.parse(row["Tanggal Update"]);
+      const tOld = Date.parse(existing.row["Tanggal Update"]);
+      const bothParsed = !Number.isNaN(tNew) && !Number.isNaN(tOld);
+      const newer = bothParsed ? tNew >= tOld : i >= existing.i;
+      if (newer) map.set(row.IDPEL, { row, i });
+    });
+    const result = new Map();
+    for (const [idpel, { row }] of map.entries()) result.set(idpel, row);
+    return result;
+  }
+  
+  function buildCustomerModels({ identitas, pemakaian, progres, operasional, settings, dayaUpdate }) {
     const s = { ...DEFAULT_SETTINGS, ...(settings || {}) };
     const pemGroups = groupByIdpel(pemakaian);
     const identMap = new Map(identitas.map((r) => [r.IDPEL, r]));
+    const dayaUpdateMap = latestDayaUpdateByIdpel(dayaUpdate);
   
     const results = [];
   
@@ -1234,6 +1300,18 @@ const Mod_scoring = (function(){
       const statusProbing = prog.StatusProbing || "Belum Dikunjungi";
       const consistencyFlag = dayaBerubah && statusProbing !== "Tersambung";
   
+      // Cross-check against the "Update Daya" tab (see latestDayaUpdateByIdpel above). If it
+      // reports a daya HIGHER than what's on file from Data Pemakaian's most recent month, the
+      // customer has already upgraded through some other channel and shouldn't keep being treated
+      // as an open tambah-daya target here - PRD ask: "digunakan untuk analisis apakah pelanggan
+      // sudah tetap menjadi target atau tidak". Kept as separate info (not folded into
+      // statusProbing, which reflects this team's own probing workflow) so the two signals don't
+      // get conflated - see filterQualified()'s excludeExternallyUpgraded option for where this
+      // actually removes them from the active-target views.
+      const dayaUpdateRow = dayaUpdateMap.get(idpel);
+      const dayaTerbaruInfo = dayaUpdateRow ? Number(dayaUpdateRow["Daya Terbaru (VA)"]) : null;
+      const sudahTambahDayaEksternal = dayaTerbaruInfo != null && !Number.isNaN(dayaTerbaruInfo) && dayaTerbaruInfo > lastRow.DAYA;
+  
       const op = (operasional || {})[idpel] || { riwayat: [], auditLog: [], photoDataUrl: null, coordOverride: null };
   
       const lat = ident.Latitude ?? op.coordOverride?.lat ?? lastRow.LAT;
@@ -1262,6 +1340,10 @@ const Mod_scoring = (function(){
         dayaBerubah,
         dayaChangeHistory,
         consistencyFlag,
+        sudahTambahDayaEksternal,
+        dayaTerkiniEksternal: sudahTambahDayaEksternal ? dayaTerbaruInfo : null,
+        tanggalUpdateDayaEksternal: sudahTambahDayaEksternal ? (dayaUpdateRow["Tanggal Update"] || null) : null,
+        catatanUpdateDayaEksternal: sudahTambahDayaEksternal ? (dayaUpdateRow["Catatan"] || "") : "",
         statusProbing,
         tanggalUpdateTerakhir: prog.TanggalUpdate || null,
         catatanTerakhir: prog.CatatanTerakhir || "",
@@ -1277,8 +1359,12 @@ const Mod_scoring = (function(){
     return results;
   }
   
-  function filterQualified(models) {
-    return models.filter((m) => m.mainCriteria);
+  // excludeExternallyUpgraded (default true) drops customers the "Update Daya" tab says have
+  // already upgraded elsewhere - they've achieved the marketing goal already, so they shouldn't
+  // keep occupying map pins / dashboard "still open" counts. Pass false to specifically review that
+  // excluded set (e.g. an audit filter) instead of the normal active-target view.
+  function filterQualified(models, { excludeExternallyUpgraded = true } = {}) {
+    return models.filter((m) => m.mainCriteria && (!excludeExternallyUpgraded || !m.sudahTambahDayaEksternal));
   }
   
   return {DEFAULT_SETTINGS, buildCustomerModels, filterQualified};
@@ -1976,7 +2062,7 @@ const Mod_google_sheetsApi = (function(){
   // falls back to string concatenation instead of addition (e.g. 0 + "480" + "560" -> "0480560"),
   // producing wildly wrong/huge scores instead of a clear error. Coerce the known numeric columns
   // right after pulling so every downstream calculation gets real numbers.
-  const NUMERIC_FIELDS = ["THBLREK", "DAYA", "PEMKWH", "JAMNYALA", "LAT", "LONG", "Latitude", "Longitude"];
+  const NUMERIC_FIELDS = ["THBLREK", "DAYA", "PEMKWH", "JAMNYALA", "LAT", "LONG", "Latitude", "Longitude", "Daya Lama (VA)", "Daya Terbaru (VA)"];
   
   function coerceNumericFields(rows) {
     return rows.map((row) => {
@@ -2016,7 +2102,20 @@ const Mod_google_sheetsApi = (function(){
       const which = !identitas.length && !pemakaian.length ? "\"Data Identitas\" dan \"Data Pemakaian\"" : (!identitas.length ? "\"Data Identitas\"" : "\"Data Pemakaian\"");
       throw new Error(`Tab ${which} kosong/tidak ditemukan datanya di spreadsheet ini. Pastikan nama tab persis sama dan ada data di bawah baris judul.`);
     }
-    return { identitas, pemakaian };
+    const dayaUpdate = await pullDayaUpdate(g);
+    return { identitas, pemakaian, dayaUpdate };
+  }
+  
+  // "Update Daya" is OPTIONAL - an existing spreadsheet that predates this feature won't have this
+  // tab yet, and that's fine (the app just has no early-warning info on external upgrades until the
+  // tab is added). Unlike Data Identitas/Data Pemakaian, a missing/empty tab here must NOT throw
+  // and break the whole pull - it should just come back empty.
+  async function pullDayaUpdate(g) {
+    try {
+      return coerceNumericFields(await fetchTab(g.tabDayaUpdate || "Update Daya"));
+    } catch (e) {
+      return [];
+    }
   }
   
   // Pull the shared "Progres Probing" tab - this is where EVERY petugas's status updates land
@@ -2584,30 +2683,44 @@ const Mod_views_login = (function(){
     await seedDefaultAccounts();
     root.innerHTML = `
       <div class="auth-screen">
-        <div class="auth-logo logo-plate"><img src="${PLN_LOGO_DATA_URI}" alt="Logo PLN" /></div>
-        <div>
-          <div style="font-weight:800; font-size:20px;">Gemar Tambah Daya</div>
-          <div style="font-size:12.5px; opacity:0.8;">Geomapping Marketing Tambah Daya ULP Nabire Kota</div>
-        </div>
-        <div class="auth-card">
-          <h2>Masuk</h2>
-          <p class="muted">Gunakan username &amp; PIN yang didaftarkan Admin di perangkat ini.</p>
-          <form id="loginForm">
-            <div class="field">
-              <label>Username</label>
-              <input type="text" id="loginUsername" autocomplete="username" required />
-            </div>
-            <div class="field">
-              <label>PIN</label>
-              <input type="password" id="loginPin" inputmode="numeric" maxlength="6" autocomplete="current-password" required />
-            </div>
-            <div class="error-text hidden" id="loginError"></div>
-            <button type="submit" class="btn block" style="margin-top:10px;">Masuk</button>
-          </form>
-          <p class="small-muted" style="margin-top:14px;">Akun contoh: <b>rudi</b> / <b>1234</b> (Admin), <b>sitti</b> / <b>1234</b> (Petugas)</p>
+        <div class="auth-inner">
+          <div class="auth-logo logo-plate"><img src="${PLN_LOGO_DATA_URI}" alt="Logo PLN" /></div>
+          <div>
+            <div style="font-weight:800; font-size:20px;">Gemar Tambah Daya</div>
+            <div style="font-size:12.5px; opacity:0.8;">Geomapping Marketing Tambah Daya ULP Nabire Kota</div>
+          </div>
+          <div class="auth-card">
+            <h2>Masuk</h2>
+            <p class="muted">Gunakan username &amp; PIN yang didaftarkan Admin di perangkat ini.</p>
+            <form id="loginForm">
+              <div class="field">
+                <label>Username</label>
+                <input type="text" id="loginUsername" autocomplete="username" required />
+              </div>
+              <div class="field">
+                <label>PIN</label>
+                <div class="field-with-toggle">
+                  <input type="password" id="loginPin" inputmode="numeric" maxlength="6" autocomplete="current-password" required />
+                  <button type="button" class="field-toggle-btn" id="togglePinBtn" aria-label="Lihat PIN" tabindex="-1">${icon("eye")}</button>
+                </div>
+              </div>
+              <div class="error-text hidden" id="loginError"></div>
+              <button type="submit" class="btn block" style="margin-top:10px;">Masuk</button>
+            </form>
+            <p class="small-muted" style="margin-top:14px;">Akun contoh: <b>rudi</b> / <b>1234</b> (Admin), <b>sitti</b> / <b>1234</b> (Petugas)</p>
+          </div>
         </div>
       </div>
     `;
+  
+    const pinInput = root.querySelector("#loginPin");
+    const togglePinBtn = root.querySelector("#togglePinBtn");
+    togglePinBtn.addEventListener("click", () => {
+      const showing = pinInput.type === "text";
+      pinInput.type = showing ? "password" : "text";
+      togglePinBtn.innerHTML = showing ? icon("eye") : icon("eyeOff");
+      togglePinBtn.setAttribute("aria-label", showing ? "Lihat PIN" : "Sembunyikan PIN");
+    });
   
     const form = root.querySelector("#loginForm");
     const errEl = root.querySelector("#loginError");
@@ -2637,17 +2750,19 @@ const Mod_views_lock = (function(){
     const session = getSession();
     root.innerHTML = `
       <div class="auth-screen">
-        <div class="auth-logo">${icon("lock")}</div>
-        <div>
-          <div style="font-weight:800; font-size:18px;">Sesi Terkunci</div>
-          <div style="font-size:12.5px; opacity:0.85;">${session ? session.nama : ""} - masukkan PIN untuk melanjutkan</div>
-        </div>
-        <div class="auth-card">
-          <div class="pin-input-row">
-            ${[0, 1, 2, 3].map((i) => `<input type="password" inputmode="numeric" maxlength="1" class="pinbox" data-i="${i}" />`).join("")}
+        <div class="auth-inner">
+          <div class="auth-logo">${icon("lock")}</div>
+          <div>
+            <div style="font-weight:800; font-size:18px;">Sesi Terkunci</div>
+            <div style="font-size:12.5px; opacity:0.85;">${session ? session.nama : ""} - masukkan PIN untuk melanjutkan</div>
           </div>
-          <div class="error-text hidden" id="lockError" style="text-align:center;"></div>
-          <button class="btn secondary block" id="switchUserBtn" style="margin-top:12px;">Ganti Pengguna</button>
+          <div class="auth-card">
+            <div class="pin-input-row">
+              ${[0, 1, 2, 3].map((i) => `<input type="password" inputmode="numeric" maxlength="1" class="pinbox" data-i="${i}" />`).join("")}
+            </div>
+            <div class="error-text hidden" id="lockError" style="text-align:center;"></div>
+            <button class="btn secondary block" id="switchUserBtn" style="margin-top:12px;">Ganti Pengguna</button>
+          </div>
         </div>
       </div>
     `;
@@ -2720,7 +2835,8 @@ const Mod_views_customerDetail = (function(){
     const progres = Store.get(KEYS.PROGRES, {});
     const operasional = Store.get(KEYS.OPERASIONAL, {});
     const settings = Store.get(KEYS.SETTINGS, {});
-    return buildCustomerModels({ identitas, pemakaian, progres, operasional, settings }).find((m) => m.idpel === idpel);
+    const dayaUpdate = Store.get(KEYS.DAYA_UPDATE, []);
+    return buildCustomerModels({ identitas, pemakaian, progres, operasional, settings, dayaUpdate }).find((m) => m.idpel === idpel);
   }
   
   function compressImage(file, maxDim = 900, quality = 0.72) {
@@ -2871,6 +2987,14 @@ const Mod_views_customerDetail = (function(){
           ${fresh.consistencyFlag ? `<div class="badge-flag" style="margin-top:8px;">${icon("warning")} Indikasi sudah tambah daya lewat jalur lain - mohon direkonsiliasi</div>` : ""}
         </div>
   
+        ${fresh.sudahTambahDayaEksternal ? `
+        <div class="card" style="border:1px solid #7A3FE0; background:#F5F1FE; margin-top:10px;">
+          <div class="card-title" style="color:#7A3FE0;">${icon("warning")} Sudah Tambah Daya Lewat Jalur Lain</div>
+          <div style="font-size:14px; margin-top:4px;">Naik dari <b>${formatVA(fresh.daya)}</b> menjadi <b>${formatVA(fresh.dayaTerkiniEksternal)}</b>${fresh.tanggalUpdateDayaEksternal ? ` pada ${formatDate(fresh.tanggalUpdateDayaEksternal)}` : ""}.</div>
+          ${fresh.catatanUpdateDayaEksternal ? `<div class="small-muted" style="margin-top:4px;">Catatan: ${escapeHtml(fresh.catatanUpdateDayaEksternal)}</div>` : ""}
+          <div class="small-muted" style="margin-top:6px;">Info dari sheet "Update Daya" - pelanggan ini sudah dikeluarkan dari daftar target aktif di Peta/Dashboard. Jika ini keliru, perbarui/hapus baris terkait di sheet "Update Daya".</div>
+        </div>` : ""}
+  
         <div class="card" style="border:none; background:var(--surface-2); margin-top:10px;">
           <div class="card-title">Status Probing</div>
           <span class="status-pill" style="font-size:12.5px;">${fresh.statusProbing}</span>
@@ -2976,7 +3100,10 @@ const Mod_views_customerDetail = (function(){
         submitBtn.disabled = !select.value;
         const val = select.value;
         if (STAGES_WITH_COST_FIELDS.includes(val)) {
-          const nextDaya = DAYA_LEVELS_LIST[Math.min(DAYA_LEVELS_LIST.indexOf(fresh.daya) + 1, DAYA_LEVELS_LIST.length - 1)];
+          // Same fix as dashboard.js's revenue estimate: find the next tier ACTUALLY above the
+          // customer's current daya, rather than assuming it's always an exact member of
+          // DAYA_LEVELS_LIST (true for sample/dummy data, not guaranteed for real Sheets data).
+          const nextDaya = DAYA_LEVELS_LIST.find((d) => d > fresh.daya) || fresh.daya;
           stageFieldsEl.innerHTML = `
             <div class="row2">
               <div class="field"><label>Target Daya (VA)</label>
@@ -3128,11 +3255,24 @@ const Mod_views_mapView = (function(){
     rute: "",
     petugas: "",
     tarif: "",
+    jnMin: "", // minimum average Jam Nyala (JN) - e.g. "720" to find only the heaviest-usage customers
     dateFrom: "",
     dateTo: "",
     filterPanelOpen: false,
     mapMode: "2d",
+    eksternalMode: false, // true = reviewing customers the "Update Daya" tab says already upgraded elsewhere, instead of the normal active-target list
+    listPage: 1, // 1-based page number for the sidebar list, PAGE_SIZE rows per page - the MAP itself always shows every filtered customer as a pin regardless of this, it only controls the (much taller) text list, which would otherwise be slow/awkward to scroll for a large result set.
   };
+  
+  const PAGE_SIZE = 30;
+  
+  // Reset the sidebar list back to page 1 whenever the filter criteria itself changes - otherwise
+  // a petugas paged to e.g. page 3 of a big result set would stay on "page 3" even after narrowing
+  // down to a handful with a new filter, which reads as broken ("page 3 of what? where did my rows
+  // go") rather than clearly page 1 of the NEW result set.
+  function resetListPaging() {
+    state.listPage = 1;
+  }
   
   const ALL_STATUSES = ["Belum Dikunjungi", "Sudah Dikunjungi", "Follow Up", "Permohonan", "Bayar", "Tersambung", "Ditolak", "Tidak Bisa Dikunjungi"];
   
@@ -3181,13 +3321,27 @@ const Mod_views_mapView = (function(){
     return ordered.concat(noCoord.map((c) => ({ ...c, _stepKm: null })));
   }
   
-  function getModels() {
+  function buildAllModelsRaw() {
     const identitas = Store.get(KEYS.IDENTITAS, []);
     const pemakaian = Store.get(KEYS.PEMAKAIAN, []);
     const progres = Store.get(KEYS.PROGRES, {});
     const operasional = Store.get(KEYS.OPERASIONAL, {});
     const settings = Store.get(KEYS.SETTINGS, {});
-    return filterQualified(buildCustomerModels({ identitas, pemakaian, progres, operasional, settings }));
+    const dayaUpdate = Store.get(KEYS.DAYA_UPDATE, []);
+    return buildCustomerModels({ identitas, pemakaian, progres, operasional, settings, dayaUpdate });
+  }
+  
+  // Normal "who's an active target" view - customers the optional "Update Daya" tab says have
+  // already upgraded elsewhere are excluded (see scoring.js filterQualified).
+  function getModels() {
+    return filterQualified(buildAllModelsRaw());
+  }
+  
+  // Audit view for the "Sudah Tambah Daya (Info Lain)" chip - specifically the customers who WOULD
+  // otherwise qualify but were excluded for already having upgraded via another channel, so they can
+  // be reviewed/confirmed rather than just silently disappearing from view.
+  function getExternallyUpgradedModels() {
+    return filterQualified(buildAllModelsRaw(), { excludeExternallyUpgraded: false }).filter((m) => m.sudahTambahDayaEksternal);
   }
   
   function applyFilters(models) {
@@ -3197,6 +3351,7 @@ const Mod_views_mapView = (function(){
       if (state.rute && m.rute !== state.rute) return false;
       if (state.petugas && m.petugas !== state.petugas) return false;
       if (state.tarif && m.tarif !== state.tarif) return false;
+      if (state.jnMin !== "" && state.jnMin != null && !(m.avgJN >= Number(state.jnMin))) return false;
       if (state.dateFrom) {
         const d = daysAgo(m.tanggalUpdateTerakhir);
         if (m.tanggalUpdateTerakhir && new Date(m.tanggalUpdateTerakhir) < new Date(state.dateFrom)) return false;
@@ -3213,7 +3368,11 @@ const Mod_views_mapView = (function(){
   }
   
   async function renderMapView(root) {
-    const allModels = getModels();
+    const allModels = state.eksternalMode ? getExternallyUpgradedModels() : getModels();
+    // Always compute this count (even outside eksternalMode) so the chip can show a badge number -
+    // that's the whole point of surfacing it as "info" per Eva's request: she should be able to see
+    // at a glance that some targets already upgraded elsewhere, without having to switch views first.
+    const externalUpgradedCount = state.eksternalMode ? allModels.length : getExternallyUpgradedModels().length;
     const routes = [...new Set(allModels.map((m) => m.rute).filter(Boolean))].sort();
     const tarifs = [...new Set(allModels.map((m) => m.tarif).filter(Boolean))].sort();
     // Petugas filter used to be built from PETUGAS_SEED - a hardcoded list of DUMMY petugas names
@@ -3247,11 +3406,14 @@ const Mod_views_mapView = (function(){
             <button class="chip tinggi ${state.subKategori === "Tinggi" ? "active" : ""}" data-cat="Tinggi">Prioritas Tinggi</button>
             <button class="chip sedang ${state.subKategori === "Sedang" ? "active" : ""}" data-cat="Sedang">Sedang</button>
           </div>
+          <button class="chip" id="chipEksternal" style="width:100%; margin-bottom:10px; justify-content:center; border:1px solid #7A3FE0; ${state.eksternalMode ? "background:#7A3FE0; color:#fff;" : "background:#fff; color:#7A3FE0;"}">
+            ${icon("warning")} Sudah Tambah Daya (Info Lain)${externalUpgradedCount ? ` · ${externalUpgradedCount}` : ""}
+          </button>
           <button class="filter-toggle" id="filterToggle">
             ${icon("filter")}
             <span class="ft-text">
               <span class="ft-title">Filter lanjutan</span>
-              <span class="ft-sub">Status probing, rute, petugas, tanggal, tarif</span>
+              <span class="ft-sub">Status probing, rute, petugas, tanggal, tarif, jam nyala</span>
             </span>
             ${icon("chevronRight")}
           </button>
@@ -3272,7 +3434,7 @@ const Mod_views_mapView = (function(){
             </div>
             <div class="row2">
               <select id="filterTarif"><option value="">Semua Tarif/Daya</option>${tarifs.map((t) => `<option ${state.tarif === t ? "selected" : ""}>${t}</option>`).join("")}</select>
-              <div></div>
+              <div class="field" style="margin:0;"><label>Jam Nyala rata-rata minimal</label><input type="number" id="filterJnMin" placeholder="contoh: 720" value="${escapeHtml(state.jnMin)}" min="0" step="1"/></div>
             </div>
             <div class="row2">
               <div class="field" style="margin:0;"><label>Aktivitas dari</label><input type="date" id="filterDateFrom" value="${state.dateFrom}"/></div>
@@ -3311,11 +3473,20 @@ const Mod_views_mapView = (function(){
   
     function refreshList() {
       let filtered = applyFilters(allModels);
-      // A specific Rute/RBM is selected - order the list as a suggested visiting route
-      // (nearest -> farthest) instead of the default score-based order. _routeOrder is computed
-      // over the full filtered set (not just the first 30 shown) so numbering stays correct/
-      // consistent between the list and the map even if a route has more than 30 customers.
-      const routeMode = !!state.rute;
+      // Order the list as a suggested visiting route (nearest -> farthest) instead of the default
+      // score-based order, whenever ANY filter has narrowed the list down - not just when a
+      // specific Rute/RBM is picked. A petugas filtering to e.g. "Prioritas Tinggi" is just as much
+      // planning a round of visits as one filtering by Rute, and benefits the same way from a
+      // suggested visiting order. Only the fully unfiltered "Semua" view (which can span multiple
+      // unrelated routes/areas at once, where a single nearest-neighbour walk makes less sense)
+      // falls back to plain score-based ordering. _routeOrder is computed over the full filtered
+      // set (not just the first 30 shown) so numbering stays correct/consistent between the list
+      // and the map even when there are more than 30 matching customers.
+      const routeMode = !!(
+        state.rute || state.petugas || state.tarif || state.jnMin !== "" ||
+        state.subKategori !== "semua" || state.statusProbing.size ||
+        state.search || state.dateFrom || state.dateTo
+      );
       if (routeMode) {
         // "Tersambung" customers are already done - they're never shown as map pins (see below),
         // so they must also be dropped before computing the route itself. Otherwise the sidebar
@@ -3326,7 +3497,13 @@ const Mod_views_mapView = (function(){
       }
       const listEl = root.querySelector("#customerList");
       const footerEl = root.querySelector("#listFooter");
-      const shown = filtered.slice(0, 30);
+      // Clamp the current page in case the filtered result set just got smaller (e.g. a sync
+      // pulled fewer matching rows) than the page the user was previously sitting on.
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      if (state.listPage > totalPages) state.listPage = totalPages;
+      if (state.listPage < 1) state.listPage = 1;
+      const startIdx = (state.listPage - 1) * PAGE_SIZE;
+      const shown = filtered.slice(startIdx, startIdx + PAGE_SIZE);
       listEl.innerHTML = shown.length ? shown.map((m) => `
         <div class="customer-row" data-idpel="${m.idpel}">
           ${routeMode
@@ -3335,17 +3512,35 @@ const Mod_views_mapView = (function(){
           <div style="flex:1; min-width:0;">
             <div class="cname">${escapeHtml(m.nama)} ${m.consistencyFlag ? `<span class="badge-flag">${icon("warning")} cek data</span>` : ""}</div>
             <div class="cmeta">${m.idpel} · ${escapeHtml(m.tarif)} · ${escapeHtml(m.petugas || "-")}</div>
-            ${routeMode
-              ? `<div class="cmeta">${m._routeOrder === 1 ? "Titik awal rute" : `${m._stepKm != null ? m._stepKm.toFixed(1) + " km" : "jarak n/a"} dari titik sebelumnya`}</div>`
-              : `<div class="cmeta">Skor ${m.score} · Jam nyala ${m.avgJN}</div>`}
+            ${state.eksternalMode
+              ? `<div class="cmeta" style="color:#7A3FE0; font-weight:600;">Info: naik ke ${m.dayaTerkiniEksternal ?? "-"} VA${m.tanggalUpdateDayaEksternal ? ` pada ${formatDate(m.tanggalUpdateDayaEksternal)}` : ""}${m.catatanUpdateDayaEksternal ? ` · ${escapeHtml(m.catatanUpdateDayaEksternal)}` : ""}</div>`
+              : routeMode
+                ? `<div class="cmeta">${m._routeOrder === 1 ? "Titik awal rute" : `${m._stepKm != null ? m._stepKm.toFixed(1) + " km" : "jarak n/a"} dari titik sebelumnya`}</div>`
+                : `<div class="cmeta">Skor ${m.score} · Jam nyala ${m.avgJN}</div>`}
           </div>
           <span class="status-pill ${statusClass(m.statusProbing)}">${m.statusProbing}</span>
         </div>
-      `).join("") : `<div class="empty-state">${icon("search")}<div>Tidak ada pelanggan yang cocok dengan filter saat ini.</div></div>`;
+      `).join("") : `<div class="empty-state">${icon("search")}<div>${state.eksternalMode ? "Belum ada pelanggan yang terdeteksi sudah tambah daya lewat jalur lain." : "Tidak ada pelanggan yang cocok dengan filter saat ini."}</div></div>`;
   
-      footerEl.textContent = filtered.length
-        ? `Menampilkan 1 - ${shown.length} dari ${filtered.length} pelanggan${routeMode ? " · diurutkan sebagai rute kunjungan (terdekat -> terjauh)" : ""}`
+      // The sidebar list is paginated (PAGE_SIZE rows per page) purely so it doesn't render a huge
+      // DOM list all at once - the MAP itself (setCustomers below) always shows every filtered
+      // customer as a pin regardless of this, so nothing is ever hidden from the map, only from
+      // this scrollable text list. Previous/Next just move the slice() window above; the map/route
+      // numbering is unaffected since those are computed over the full `filtered` set already.
+      footerEl.innerHTML = filtered.length
+        ? `<div>Menampilkan ${startIdx + 1} - ${startIdx + shown.length} dari ${filtered.length} pelanggan${state.eksternalMode ? " · info: sudah tambah daya lewat jalur lain (bukan target aktif)" : routeMode ? " · diurutkan sebagai rute kunjungan (terdekat -> terjauh)" : ""}</div>`
+          + (totalPages > 1 ? `
+            <div class="pagination-row">
+              <button class="page-arrow-btn" id="prevPageBtn" aria-label="Halaman sebelumnya" ${state.listPage <= 1 ? "disabled" : ""}>&larr;</button>
+              <span class="small-muted">Halaman ${state.listPage} dari ${totalPages}</span>
+              <button class="page-arrow-btn" id="nextPageBtn" aria-label="Halaman berikutnya" ${state.listPage >= totalPages ? "disabled" : ""}>&rarr;</button>
+            </div>` : "")
         : "";
+  
+      const prevPageBtn = footerEl.querySelector("#prevPageBtn");
+      const nextPageBtn = footerEl.querySelector("#nextPageBtn");
+      if (prevPageBtn) prevPageBtn.addEventListener("click", () => { state.listPage -= 1; refreshList(); listEl.scrollTop = 0; });
+      if (nextPageBtn) nextPageBtn.addEventListener("click", () => { state.listPage += 1; refreshList(); listEl.scrollTop = 0; });
   
       listEl.querySelectorAll(".customer-row").forEach((rowEl) => {
         rowEl.addEventListener("click", () => openCustomerDetail(rowEl.dataset.idpel, () => renderMapView(root)));
@@ -3378,9 +3573,10 @@ const Mod_views_mapView = (function(){
       syncBtn.innerHTML = `${icon("sync")} Menyinkron...`;
       try {
         await requestAccessToken();
-        const { identitas, pemakaian } = await pullAllData();
+        const { identitas, pemakaian, dayaUpdate } = await pullAllData();
         Store.set(KEYS.IDENTITAS, identitas);
         Store.set(KEYS.PEMAKAIAN, pemakaian);
+        Store.set(KEYS.DAYA_UPDATE, dayaUpdate);
         // Fold in teammates' latest status-probing updates too, same as the Import Data screen,
         // so this button is a genuine one-stop "get everything current" action from the map itself.
         const { updated } = await pullTeamProgres();
@@ -3399,11 +3595,16 @@ const Mod_views_mapView = (function(){
       }
     });
   
-    root.querySelector("#mapSearch").addEventListener("input", (e) => { state.search = e.target.value; refreshList(); });
+    root.querySelector("#mapSearch").addEventListener("input", (e) => { state.search = e.target.value; resetListPaging(); refreshList(); });
   
     root.querySelectorAll(".chip[data-cat]").forEach((btn) => {
-      btn.addEventListener("click", () => { state.subKategori = btn.dataset.cat; renderMapView(root); });
+      btn.addEventListener("click", () => { state.subKategori = btn.dataset.cat; resetListPaging(); renderMapView(root); });
     });
+  
+    const chipEksternal = root.querySelector("#chipEksternal");
+    if (chipEksternal) {
+      chipEksternal.addEventListener("click", () => { state.eksternalMode = !state.eksternalMode; resetListPaging(); renderMapView(root); });
+    }
   
     root.querySelector("#filterToggle").addEventListener("click", () => { state.filterPanelOpen = !state.filterPanelOpen; renderMapView(root); });
   
@@ -3411,17 +3612,19 @@ const Mod_views_mapView = (function(){
       btn.addEventListener("click", () => {
         const s = btn.dataset.status;
         if (state.statusProbing.has(s)) state.statusProbing.delete(s); else state.statusProbing.add(s);
+        resetListPaging();
         renderMapView(root);
       });
     });
-    root.querySelector("#selAllStatus").addEventListener("click", () => { state.statusProbing = new Set(ALL_STATUSES); renderMapView(root); });
-    root.querySelector("#deselAllStatus").addEventListener("click", () => { state.statusProbing = new Set(); renderMapView(root); });
+    root.querySelector("#selAllStatus").addEventListener("click", () => { state.statusProbing = new Set(ALL_STATUSES); resetListPaging(); renderMapView(root); });
+    root.querySelector("#deselAllStatus").addEventListener("click", () => { state.statusProbing = new Set(); resetListPaging(); renderMapView(root); });
   
-    root.querySelector("#filterRute").addEventListener("change", (e) => { state.rute = e.target.value; refreshList(); });
-    root.querySelector("#filterPetugas").addEventListener("change", (e) => { state.petugas = e.target.value; refreshList(); });
-    root.querySelector("#filterTarif").addEventListener("change", (e) => { state.tarif = e.target.value; refreshList(); });
-    root.querySelector("#filterDateFrom").addEventListener("change", (e) => { state.dateFrom = e.target.value; refreshList(); });
-    root.querySelector("#filterDateTo").addEventListener("change", (e) => { state.dateTo = e.target.value; refreshList(); });
+    root.querySelector("#filterRute").addEventListener("change", (e) => { state.rute = e.target.value; resetListPaging(); refreshList(); });
+    root.querySelector("#filterPetugas").addEventListener("change", (e) => { state.petugas = e.target.value; resetListPaging(); refreshList(); });
+    root.querySelector("#filterTarif").addEventListener("change", (e) => { state.tarif = e.target.value; resetListPaging(); refreshList(); });
+    root.querySelector("#filterJnMin").addEventListener("input", (e) => { state.jnMin = e.target.value; resetListPaging(); refreshList(); });
+    root.querySelector("#filterDateFrom").addEventListener("change", (e) => { state.dateFrom = e.target.value; resetListPaging(); refreshList(); });
+    root.querySelector("#filterDateTo").addEventListener("change", (e) => { state.dateTo = e.target.value; resetListPaging(); refreshList(); });
   
     root.querySelector("#zoomIn").addEventListener("click", () => engine && engine.renderer.zoomIn());
     root.querySelector("#zoomOut").addEventListener("click", () => engine && engine.renderer.zoomOut());
@@ -3468,7 +3671,15 @@ const Mod_views_dashboard = (function(){
     const progres = Store.get(KEYS.PROGRES, {});
     const operasional = Store.get(KEYS.OPERASIONAL, {});
     const settings = Store.get(KEYS.SETTINGS, {});
-    return { models: filterQualified(buildCustomerModels({ identitas, pemakaian, progres, operasional, settings })), settings, operasional };
+    const dayaUpdate = Store.get(KEYS.DAYA_UPDATE, []);
+    const rawModels = buildCustomerModels({ identitas, pemakaian, progres, operasional, settings, dayaUpdate });
+    // "Sudah Tambah Daya (Info Lain)" - customers the optional "Update Daya" tab says have already
+    // upgraded via some channel outside this app/team. filterQualified() above already excludes them
+    // from the normal active-target `models` list; kept here separately (before that exclusion) so
+    // the dashboard can still surface their count for Eva's requested "analysis apakah pelanggan
+    // sudah tetap menjadi target atau tidak" instead of them just silently disappearing.
+    const externallyUpgraded = rawModels.filter((m) => m.sudahTambahDayaEksternal);
+    return { models: filterQualified(rawModels), externallyUpgraded, settings, operasional };
   }
   
   function applyDashFilters(models) {
@@ -3498,9 +3709,10 @@ const Mod_views_dashboard = (function(){
   }
   
   function renderDashboard(root) {
-    const { models, settings, operasional } = getAllData();
+    const { models, externallyUpgraded, settings, operasional } = getAllData();
     const routes = [...new Set(models.map((m) => m.rute).filter(Boolean))].sort();
     const filtered = applyDashFilters(models);
+    const externallyUpgradedFiltered = applyDashFilters(externallyUpgraded);
   
     const now = new Date(2026, 6, 3);
     const thisMonthKey = now.getFullYear() * 100 + (now.getMonth() + 1);
@@ -3528,10 +3740,19 @@ const Mod_views_dashboard = (function(){
   
     const pipelineOpen = filtered.filter((m) => !["Tersambung", "Ditolak"].includes(m.statusProbing));
     const estimasiPendapatan = pipelineOpen.reduce((sum, m) => {
-      const target = m.targetDaya || DAYA_LEVELS_LIST[Math.min(DAYA_LEVELS_LIST.indexOf(m.daya) + 1, DAYA_LEVELS_LIST.length - 1)];
+      // "Next tier up" from the customer's CURRENT daya. The sample/dummy generator always assigns
+      // daya values that are exact members of DAYA_LEVELS_LIST, so `indexOf(m.daya) + 1` always
+      // landed on a real, higher tier there. Real customers pulled from Google Sheets aren't
+      // guaranteed to match a listed tier exactly - when indexOf() came back -1 (not found), the
+      // old formula wrapped around to index 0, i.e. the SMALLEST tier (450 VA) - a "downgrade"
+      // target lower than the customer's actual current daya, which produced a NEGATIVE revenue
+      // estimate (this is the "kenapa minus?" bug). Find the smallest listed tier that's actually
+      // greater than the current daya instead; if there isn't one (already at/above the top tier),
+      // there's no known upgrade path, so contribute 0 rather than guessing backwards.
+      const target = m.targetDaya || DAYA_LEVELS_LIST.find((lvl) => lvl > m.daya) || m.daya;
       const res = lookupCost(costTable, m.daya, target);
       const val = res == null ? 0 : (typeof res === "object" ? res.value : res);
-      return sum + val;
+      return sum + Math.max(0, val);
     }, 0);
   
     // sebaran prioritas
@@ -3624,6 +3845,7 @@ const Mod_views_dashboard = (function(){
           <div class="card kpi-card"><div class="kpi-label">Realisasi Tambah Daya</div><div class="kpi-value" style="font-size:16px;">${realisasiKVA.toFixed(1)} kVA</div><div class="kpi-sub">akumulasi Tersambung</div></div>
           <div class="card kpi-card"><div class="kpi-label">Estimasi Potensi Pendapatan</div><div class="kpi-value" style="font-size:16px;">${formatRupiah(estimasiPendapatan)}</div><div class="kpi-sub">dari target belum closing</div></div>
           <div class="card kpi-card"><div class="kpi-label">Tidak Bisa Dikunjungi</div><div class="kpi-value">${formatNumber(tidakBisaDikunjungi.length)}</div><div class="kpi-sub">lokasi ditandai tidak aman</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Sudah Tambah Daya (Info Lain)</div><div class="kpi-value" style="color:#7A3FE0;">${formatNumber(externallyUpgradedFiltered.length)}</div><div class="kpi-sub">naik daya lewat jalur lain, sudah tidak jadi target aktif</div></div>
         </div>
   
         <div class="grid-2" style="margin-top:14px;">
@@ -3697,6 +3919,15 @@ const Mod_views_dashboard = (function(){
         </div>
   
         <div class="card" style="margin-top:10px;">
+          <div class="card-title" style="color:#7A3FE0;">${icon("warning")} Sudah Tambah Daya Lewat Jalur Lain (${externallyUpgradedFiltered.length})</div>
+          <div class="small-muted" style="margin-bottom:8px;">Pelanggan yang menurut sheet "Update Daya" ternyata sudah naik daya lewat jalur lain (di luar tim ini). Sudah dikeluarkan dari daftar target aktif - daftar ini untuk analisis/verifikasi saja.</div>
+          <ul class="list-plain" id="externalUpgradeList">
+            ${externallyUpgradedFiltered.slice(0, 10).map((m) => `<li data-idpel="${m.idpel}" style="cursor:pointer;"><span>${escapeHtml(m.nama)} <span class="small-muted">(${m.idpel})</span></span><span class="small-muted">${formatVA(m.daya)} → ${formatVA(m.dayaTerkiniEksternal)}${m.tanggalUpdateDayaEksternal ? " · " + formatDate(m.tanggalUpdateDayaEksternal) : ""}</span></li>`).join("") || '<li class="small-muted">Belum ada yang terdeteksi.</li>'}
+          </ul>
+          ${externallyUpgradedFiltered.length > 10 ? `<div class="small-muted" style="margin-top:6px;">+${externallyUpgradedFiltered.length - 10} pelanggan lainnya - lihat selengkapnya di Peta &gt; "Sudah Tambah Daya (Info Lain)".</div>` : ""}
+        </div>
+  
+        <div class="card" style="margin-top:10px;">
           <div class="card-title">Log Audit Perubahan (Lintas Pelanggan)</div>
           <ul class="list-plain">
             ${auditRows.slice(0, 15).map((a) => `<li><span>${escapeHtml(a.aksi)} <span class="small-muted">(${a.idpel})</span></span><span class="small-muted">${escapeHtml(a.petugas || "-")} · ${formatDate(a.waktu)}</span></li>`).join("") || '<li class="small-muted">Belum ada log.</li>'}
@@ -3720,7 +3951,7 @@ const Mod_views_dashboard = (function(){
     });
     root.querySelector("#printPdf").addEventListener("click", () => window.print());
   
-    root.querySelectorAll("#agingList li[data-idpel], #consistencyList li[data-idpel]").forEach((li) => {
+    root.querySelectorAll("#agingList li[data-idpel], #consistencyList li[data-idpel], #externalUpgradeList li[data-idpel]").forEach((li) => {
       li.addEventListener("click", () => openCustomerDetail(li.dataset.idpel, () => renderDashboard(root)));
     });
   }
@@ -3748,6 +3979,7 @@ const Mod_views_importData = (function(){
     // before and after clicking "Tarik Data dari Sheets".
     const identitasCount = Store.get(KEYS.IDENTITAS, []).length;
     const pemakaianCount = Store.get(KEYS.PEMAKAIAN, []).length;
+    const dayaUpdateCount = Store.get(KEYS.DAYA_UPDATE, []).length;
     const sampleIdpel = (Store.get(KEYS.IDENTITAS, [])[0] || {}).IDPEL || "-";
     const dataSource = Store.get(KEYS.DATA_SOURCE, null); // "real" | "dummy" | null
   
@@ -3772,7 +4004,7 @@ const Mod_views_importData = (function(){
           </div>
           ${lastPull ? `<div class="small-muted" style="margin-top:8px;">Terakhir ditarik: ${formatDateTime(lastPull)}</div>` : ""}
           <div class="small-muted" style="margin-top:8px; padding:8px; background:var(--bg-alt,#F2F4F7); border-radius:6px;">
-            Data tersimpan di perangkat ini sekarang: <b>${identitasCount}</b> baris Data Identitas · <b>${pemakaianCount}</b> baris Data Pemakaian · Contoh IDPEL pertama: <b>${sampleIdpel}</b><br/>
+            Data tersimpan di perangkat ini sekarang: <b>${identitasCount}</b> baris Data Identitas · <b>${pemakaianCount}</b> baris Data Pemakaian · <b>${dayaUpdateCount}</b> baris Update Daya (opsional) · Contoh IDPEL pertama: <b>${sampleIdpel}</b><br/>
             <span style="opacity:0.8;">Bandingkan angka &amp; ID ini SEBELUM dan SESUDAH menekan "Tarik Data dari Sheets" - kalau tidak berubah sama sekali, berarti data baru belum benar-benar tersimpan.</span>
           </div>
           <div class="small-muted" id="storageQuotaLine" style="margin-top:6px;">Memeriksa kapasitas penyimpanan perangkat...</div>
@@ -3832,6 +4064,9 @@ const Mod_views_importData = (function(){
       Store.set(KEYS.OPERASIONAL, operasional);
       Store.set(KEYS.SEEDED, true);
       Store.set(KEYS.DATA_SOURCE, "dummy");
+      // Clear any previously-pulled "Update Daya" rows too - they reference real IDPELs that won't
+      // match this fresh dummy dataset, so keeping them around would just be stale/confusing.
+      Store.set(KEYS.DAYA_UPDATE, []);
       toast("Data contoh dimuat.", "ok");
       renderImportData(root);
     });
@@ -3841,16 +4076,17 @@ const Mod_views_importData = (function(){
       btn.disabled = true; btn.textContent = "Menarik data...";
       try {
         await requestAccessToken();
-        const { identitas, pemakaian } = await pullAllData();
+        const { identitas, pemakaian, dayaUpdate } = await pullAllData();
         Store.set(KEYS.IDENTITAS, identitas);
         Store.set(KEYS.PEMAKAIAN, pemakaian);
+        Store.set(KEYS.DAYA_UPDATE, dayaUpdate);
         // Also fold in the latest status-probing updates from every petugas sharing this
         // spreadsheet, so this device's map/dashboard reflects the whole team's work, not
         // just what was entered locally.
         const { updated } = await pullTeamProgres();
         Store.set("lastPull", new Date().toISOString());
         Store.set(KEYS.DATA_SOURCE, "real");
-        toast(`Data berhasil ditarik${updated ? ` · ${updated} update tim digabungkan` : ""}.`, "ok");
+        toast(`Data berhasil ditarik${dayaUpdate.length ? ` · ${dayaUpdate.length} baris Update Daya ditemukan` : ""}${updated ? ` · ${updated} update tim digabungkan` : ""}.`, "ok");
       } catch (e) {
         toast("Gagal menarik data: " + e.message, "err");
       }
