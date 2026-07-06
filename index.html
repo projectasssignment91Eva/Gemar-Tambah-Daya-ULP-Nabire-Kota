@@ -3059,6 +3059,15 @@ const Mod_views_mapView = (function(){
     const allModels = getModels();
     const routes = [...new Set(allModels.map((m) => m.rute).filter(Boolean))].sort();
     const tarifs = [...new Set(allModels.map((m) => m.tarif).filter(Boolean))].sort();
+    // Petugas filter used to be built from PETUGAS_SEED - a hardcoded list of DUMMY petugas names
+    // from dummyData.js - so it always showed the same sample names ("Rudi Hartono", "Sitti
+    // Rahma", ...) no matter what was actually pulled from Google Sheets. Build it from the real,
+    // currently-loaded customer models instead, same as routes/tarifs above, so it reflects
+    // whichever petugas names actually exist in this device's data right now. Dummy petugas names
+    // are kept as a fallback ONLY while dummy data is genuinely still active (nothing pulled yet),
+    // so the filter isn't empty on a brand-new install.
+    const petugasFromData = [...new Set(allModels.map((m) => m.petugas).filter(Boolean))].sort();
+    const petugasOptions = petugasFromData.length ? petugasFromData : PETUGAS_SEED;
   
     root.innerHTML = `
       <div class="map-layout" id="mapLayout">
@@ -3102,7 +3111,7 @@ const Mod_views_mapView = (function(){
             </div>
             <div class="row2">
               <select id="filterRute"><option value="">Semua Rute</option>${routes.map((r) => `<option ${state.rute === r ? "selected" : ""}>${r}</option>`).join("")}</select>
-              <select id="filterPetugas"><option value="">Semua Petugas</option>${PETUGAS_SEED.map((p) => `<option ${state.petugas === p ? "selected" : ""}>${p}</option>`).join("")}</select>
+              <select id="filterPetugas"><option value="">Semua Petugas</option>${petugasOptions.map((p) => `<option ${state.petugas === p ? "selected" : ""}>${p}</option>`).join("")}</select>
             </div>
             <div class="row2">
               <select id="filterTarif"><option value="">Semua Tarif/Daya</option>${tarifs.map((t) => `<option ${state.tarif === t ? "selected" : ""}>${t}</option>`).join("")}</select>
