@@ -261,6 +261,28 @@ img { max-width: 100%; }
 [data-theme="dark"] .filter-toggle { color: var(--brand-yellow); }
 .filter-panel { padding: 0 10px 8px; border-bottom: 1px solid var(--border); display: grid; gap: 6px; }
 .filter-panel .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* Rute/Petugas/Tarif/Kogol checkbox dropdowns - a one-line trigger (same footprint as the plain
+   <select> it replaces) that opens a floating checkbox panel, so picking more than one value
+   doesn't cost any permanent vertical space in the (already tightened) filter panel. */
+.multiselect { position: relative; min-width: 0; }
+.multiselect-trigger {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 7px 9px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.multiselect-trigger .ms-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multiselect-trigger .ms-chevron { flex-shrink: 0; transform: rotate(90deg); width: 14px; height: 14px; opacity: 0.6; }
+.multiselect-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md); padding: 8px; max-height: 230px; display: flex; flex-direction: column;
+}
+.ms-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; padding: 0 2px 6px; flex-shrink: 0; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.ms-actions .link-btn { white-space: nowrap; }
+.ms-options { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.ms-option { display: flex; align-items: center; gap: 7px; padding: 5px 4px; font-size: 12.5px; border-radius: 4px; cursor: pointer; }
+.ms-option:hover { background: var(--surface-2); }
+.ms-option input { flex-shrink: 0; width: 15px; height: 15px; accent-color: var(--brand-navy); }
 .filter-panel-row { display: flex; justify-content: space-between; align-items: center; }
 .status-chip-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
@@ -336,6 +358,12 @@ img { max-width: 100%; }
 
 /* ---- Cards / KPI (dashboard) ---- */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+/* Every KPI card opens a detail modal (list of the underlying customers + export) on click - see
+   openKpiDetailModal() in dashboard.js. Hover/press feedback signals that it's clickable, since
+   a plain stat card doesn't otherwise look actionable. */
+.kpi-card { cursor: pointer; transition: box-shadow 0.15s, transform 0.15s; }
+.kpi-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.kpi-card:active { transform: translateY(0); }
 .card { background: var(--surface); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); border: 1px solid var(--border); }
 .kpi-card .kpi-label { font-size: 11.5px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; }
 .kpi-card .kpi-value { font-size: 22px; font-weight: 800; }
@@ -3273,10 +3301,10 @@ const Mod_views_mapView = (function(){
     search: "",
     subKategori: "semua", // semua | Tinggi | Sedang
     statusProbing: new Set(), // empty = semua
-    rute: "",
-    petugas: "",
-    tarif: "",
-    kogol: "", // KOGOL = kode/golongan tarif pelanggan, from the optional "KOGOL" column in "Data Pemakaian"
+    rute: new Set(), // empty = semua (multi-select, same convention as statusProbing below)
+    petugas: new Set(),
+    tarif: new Set(),
+    kogol: new Set(), // KOGOL = kode/golongan tarif pelanggan, from the optional "KOGOL" column in "Data Pemakaian"
     jnMin: "", // minimum average Jam Nyala (JN) - e.g. "720" to find only the heaviest-usage customers
     dateFrom: "",
     dateTo: "",
@@ -3297,6 +3325,16 @@ const Mod_views_mapView = (function(){
   }
   
   const ALL_STATUSES = ["Belum Dikunjungi", "Sudah Dikunjungi", "Follow Up", "Permohonan", "Bayar", "Tersambung", "Ditolak", "Tidak Bisa Dikunjungi"];
+  
+  // Rute/Petugas/Tarif/Kogol are all multi-select checkbox dropdowns (see renderMultiSelect below).
+  // Keeping the label text in one place so the trigger button summary ("3 Rute dipilih" etc.) and
+  // the panel's own generation stay consistent.
+  const MULTISELECT_LABELS = { rute: "Rute", petugas: "Petugas", tarif: "Tarif/Daya", kogol: "Kogol" };
+  
+  // Tracks the currently-bound document-level "click outside closes the open dropdown" handler, so
+  // it can be removed before a fresh one is attached on every renderMapView() call - otherwise each
+  // full re-render (e.g. toggling a chip) would stack another listener on `document` forever.
+  let outsideMsClickHandler = null;
   
   function statusClass(status) {
     const map = {
@@ -3370,10 +3408,10 @@ const Mod_views_mapView = (function(){
     return models.filter((m) => {
       if (state.subKategori !== "semua" && m.subKategori !== state.subKategori) return false;
       if (state.statusProbing.size && !state.statusProbing.has(m.statusProbing)) return false;
-      if (state.rute && m.rute !== state.rute) return false;
-      if (state.petugas && m.petugas !== state.petugas) return false;
-      if (state.tarif && m.tarif !== state.tarif) return false;
-      if (state.kogol && m.kogol !== state.kogol) return false;
+      if (state.rute.size && !state.rute.has(m.rute)) return false;
+      if (state.petugas.size && !state.petugas.has(m.petugas)) return false;
+      if (state.tarif.size && !state.tarif.has(m.tarif)) return false;
+      if (state.kogol.size && !state.kogol.has(m.kogol)) return false;
       if (state.jnMin !== "" && state.jnMin != null && !(m.avgJN >= Number(state.jnMin))) return false;
       if (state.dateFrom) {
         const d = daysAgo(m.tanggalUpdateTerakhir);
@@ -3388,6 +3426,43 @@ const Mod_views_mapView = (function(){
       }
       return true;
     });
+  }
+  
+  // Compact checkbox dropdown for Rute/Petugas/Tarif/Kogol - a single-line trigger button (so it
+  // takes no more vertical space than the old <select> it replaces) that opens a scrollable
+  // checkbox panel on click, letting a petugas pick more than one value at once. Mirrors the
+  // existing Status Probing chip-grid's "Pilih Semua"/"Batalkan Semua" pattern for consistency,
+  // just collapsed behind a trigger since Rute/Petugas/Tarif/Kogol can have many more distinct
+  // values than the fixed 8 statuses (a permanently-expanded chip grid for all of those would undo
+  // the compacting work already done on this screen).
+  function renderMultiSelect(field, allOptions, selectedSet) {
+    const label = MULTISELECT_LABELS[field];
+    const summary = selectedSet.size === 0
+      ? `Semua ${label}`
+      : selectedSet.size === 1
+        ? [...selectedSet][0]
+        : `${selectedSet.size} ${label} dipilih`;
+    return `
+      <div class="multiselect" data-field="${field}">
+        <button type="button" class="multiselect-trigger" data-ms-trigger="${field}">
+          <span class="ms-label">${escapeHtml(summary)}</span>
+          ${icon("chevronRight", "ms-chevron")}
+        </button>
+        <div class="multiselect-panel hidden" data-ms-panel="${field}">
+          <div class="ms-actions">
+            <button type="button" class="link-btn" data-ms-all="${field}">Pilih semua</button>
+            <button type="button" class="link-btn" data-ms-none="${field}">Kosongkan</button>
+          </div>
+          <div class="ms-options">
+            ${allOptions.length ? allOptions.map((o) => `
+              <label class="ms-option">
+                <input type="checkbox" data-ms-checkbox="${field}" value="${escapeHtml(o)}" ${selectedSet.has(o) ? "checked" : ""}/>
+                <span>${escapeHtml(o)}</span>
+              </label>`).join("") : `<div class="small-muted" style="padding:6px 4px;">Belum ada data.</div>`}
+          </div>
+        </div>
+      </div>
+    `;
   }
   
   async function renderMapView(root) {
@@ -3456,12 +3531,12 @@ const Mod_views_mapView = (function(){
               ${ALL_STATUSES.map((s) => `<button class="chip status-chip ${state.statusProbing.has(s) ? "active" : ""}" data-status="${s}">${s}</button>`).join("")}
             </div>
             <div class="row2">
-              <select id="filterRute"><option value="">Semua Rute</option>${routes.map((r) => `<option ${state.rute === r ? "selected" : ""}>${r}</option>`).join("")}</select>
-              <select id="filterPetugas"><option value="">Semua Petugas</option>${petugasOptions.map((p) => `<option ${state.petugas === p ? "selected" : ""}>${p}</option>`).join("")}</select>
+              ${renderMultiSelect("rute", routes, state.rute)}
+              ${renderMultiSelect("petugas", petugasOptions, state.petugas)}
             </div>
             <div class="row2">
-              <select id="filterTarif"><option value="">Semua Tarif/Daya</option>${tarifs.map((t) => `<option ${state.tarif === t ? "selected" : ""}>${t}</option>`).join("")}</select>
-              <select id="filterKogol"><option value="">Semua Kogol</option>${kogols.map((k) => `<option ${state.kogol === k ? "selected" : ""}>${k}</option>`).join("")}</select>
+              ${renderMultiSelect("tarif", tarifs, state.tarif)}
+              ${renderMultiSelect("kogol", kogols, state.kogol)}
             </div>
             <div class="field" style="margin:0;"><label>JN rata-rata minimal</label><input type="number" id="filterJnMin" placeholder="contoh: 720" value="${escapeHtml(state.jnMin)}" min="0" step="1"/></div>
             <div class="row2">
@@ -3511,7 +3586,7 @@ const Mod_views_mapView = (function(){
       // set (not just the first 30 shown) so numbering stays correct/consistent between the list
       // and the map even when there are more than 30 matching customers.
       const routeMode = !!(
-        state.rute || state.petugas || state.tarif || state.kogol || state.jnMin !== "" ||
+        state.rute.size || state.petugas.size || state.tarif.size || state.kogol.size || state.jnMin !== "" ||
         state.subKategori !== "semua" || state.statusProbing.size ||
         state.search || state.dateFrom || state.dateTo
       );
@@ -3647,10 +3722,58 @@ const Mod_views_mapView = (function(){
     root.querySelector("#selAllStatus").addEventListener("click", () => { state.statusProbing = new Set(ALL_STATUSES); resetListPaging(); renderMapView(root); });
     root.querySelector("#deselAllStatus").addEventListener("click", () => { state.statusProbing = new Set(); resetListPaging(); renderMapView(root); });
   
-    root.querySelector("#filterRute").addEventListener("change", (e) => { state.rute = e.target.value; resetListPaging(); refreshList(); });
-    root.querySelector("#filterPetugas").addEventListener("change", (e) => { state.petugas = e.target.value; resetListPaging(); refreshList(); });
-    root.querySelector("#filterTarif").addEventListener("change", (e) => { state.tarif = e.target.value; resetListPaging(); refreshList(); });
-    root.querySelector("#filterKogol").addEventListener("change", (e) => { state.kogol = e.target.value; resetListPaging(); refreshList(); });
+    // Wire up the Rute/Petugas/Tarif/Kogol checkbox dropdowns (see renderMultiSelect above).
+    function updateMsLabel(field) {
+      const labelEl = root.querySelector(`[data-ms-trigger="${field}"] .ms-label`);
+      if (!labelEl) return;
+      const set = state[field];
+      const label = MULTISELECT_LABELS[field];
+      labelEl.textContent = set.size === 0 ? `Semua ${label}` : set.size === 1 ? [...set][0] : `${set.size} ${label} dipilih`;
+    }
+    Object.keys(MULTISELECT_LABELS).forEach((field) => {
+      const trigger = root.querySelector(`[data-ms-trigger="${field}"]`);
+      const panel = root.querySelector(`[data-ms-panel="${field}"]`);
+      if (!trigger || !panel) return;
+      trigger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const wasHidden = panel.classList.contains("hidden");
+        root.querySelectorAll(".multiselect-panel").forEach((p) => p.classList.add("hidden"));
+        if (wasHidden) panel.classList.remove("hidden");
+      });
+      panel.querySelectorAll(`input[data-ms-checkbox="${field}"]`).forEach((cb) => {
+        cb.addEventListener("change", () => {
+          if (cb.checked) state[field].add(cb.value); else state[field].delete(cb.value);
+          updateMsLabel(field);
+          resetListPaging();
+          refreshList();
+        });
+      });
+      const allBtn = panel.querySelector(`[data-ms-all="${field}"]`);
+      const noneBtn = panel.querySelector(`[data-ms-none="${field}"]`);
+      if (allBtn) allBtn.addEventListener("click", () => {
+        panel.querySelectorAll(`input[data-ms-checkbox="${field}"]`).forEach((cb) => { cb.checked = true; state[field].add(cb.value); });
+        updateMsLabel(field);
+        resetListPaging();
+        refreshList();
+      });
+      if (noneBtn) noneBtn.addEventListener("click", () => {
+        panel.querySelectorAll(`input[data-ms-checkbox="${field}"]`).forEach((cb) => { cb.checked = false; });
+        state[field].clear();
+        updateMsLabel(field);
+        resetListPaging();
+        refreshList();
+      });
+    });
+    // Close whichever dropdown is open when clicking anywhere outside it - replace any handler left
+    // over from a previous render so they don't pile up on `document` every time this view re-renders.
+    if (outsideMsClickHandler) document.removeEventListener("click", outsideMsClickHandler);
+    outsideMsClickHandler = (e) => {
+      if (!e.target.closest(".multiselect")) {
+        root.querySelectorAll(".multiselect-panel").forEach((p) => p.classList.add("hidden"));
+      }
+    };
+    document.addEventListener("click", outsideMsClickHandler);
+  
     root.querySelector("#filterJnMin").addEventListener("input", (e) => { state.jnMin = e.target.value; resetListPaging(); refreshList(); });
     root.querySelector("#filterDateFrom").addEventListener("change", (e) => { state.dateFrom = e.target.value; resetListPaging(); refreshList(); });
     root.querySelector("#filterDateTo").addEventListener("change", (e) => { state.dateTo = e.target.value; resetListPaging(); refreshList(); });
@@ -3707,7 +3830,11 @@ const Mod_views_dashboard = (function(){
     // from the normal active-target `models` list; kept here separately (before that exclusion) so
     // the dashboard can still surface their count for Eva's requested "analysis apakah pelanggan
     // sudah tetap menjadi target atau tidak" instead of them just silently disappearing.
-    const externallyUpgraded = rawModels.filter((m) => m.sudahTambahDayaEksternal);
+    // IMPORTANT: must gate on m.mainCriteria same as mapView.js's getExternallyUpgradedModels(), else
+    // this count includes customers who never even met the JN threshold to be a target in the first
+    // place (so their "external upgrade" isn't meaningful info) - that mismatch caused Peta and
+    // Dashboard to show different counts (e.g. 1 vs 13) for what's supposed to be the same group.
+    const externallyUpgraded = rawModels.filter((m) => m.mainCriteria && m.sudahTambahDayaEksternal);
     return { models: filterQualified(rawModels), externallyUpgraded, settings, operasional };
   }
   
@@ -3735,6 +3862,66 @@ const Mod_views_dashboard = (function(){
     const a = document.createElement("a");
     a.href = url; a.download = filename; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  
+  // Standard column shape used by the main "Ekspor Excel" button - reused for every per-KPI export
+  // too, so a petugas always gets the same familiar columns regardless of which card they clicked.
+  const DEFAULT_EXPORT_HEADERS = ["IDPEL", "Nama", "Rute", "Petugas", "SubKategori", "Skor", "JamNyala", "Status", "TargetDaya", "Biaya", "TanggalUpdate"];
+  function defaultExportRows(models) {
+    return models.map((m) => ({
+      IDPEL: m.idpel, Nama: m.nama, Rute: m.rute, Petugas: m.petugas, SubKategori: m.subKategori,
+      Skor: m.score, JamNyala: m.avgJN, Status: m.statusProbing, TargetDaya: m.targetDaya || "",
+      Biaya: m.biayaPenyambungan || "", TanggalUpdate: m.tanggalUpdateTerakhir || "",
+    }));
+  }
+  
+  // Clicking any KPI card opens this - a scrollable list of exactly the customers that number is
+  // counting (so "152" isn't just a number, it's something a petugas can actually go look at), plus
+  // its own "Ekspor Excel" so she can pull just that subset instead of always exporting everything.
+  // Reuses the same .modal-backdrop/.modal-sheet markup as the customer detail sheet, and clicking
+  // a row opens that same full detail view (which itself closes this modal automatically - see
+  // customerDetail.js's own "remove any existing modal-backdrop" guard on open).
+  function openKpiDetailModal({ title, models, rowMeta, exportRows, exportHeaders, exportPrefix, onAfterCustomerChange }) {
+    document.querySelectorAll(".modal-backdrop").forEach((el) => el.remove());
+    const rows = exportRows || defaultExportRows(models);
+    const headers = exportHeaders || DEFAULT_EXPORT_HEADERS;
+    const metaFor = rowMeta || ((m) => `${escapeHtml(m.rute || "-")} · ${escapeHtml(m.statusProbing || "")}`);
+  
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>${escapeHtml(title)} (${formatNumber(models.length)})</h3>
+          <button class="modal-close">${icon("close")}</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
+            <button class="btn secondary sm" id="kpiExportBtn" ${models.length ? "" : "disabled"}>${icon("download")} Ekspor Excel</button>
+          </div>
+          <ul class="list-plain" id="kpiDetailList">
+            ${models.length ? models.map((m) => `
+              <li data-idpel="${m.idpel}" style="cursor:pointer;">
+                <span>${escapeHtml(m.nama)} <span class="small-muted">(${m.idpel})</span></span>
+                <span class="small-muted">${metaFor(m)}</span>
+              </li>`).join("") : `<li class="small-muted">Tidak ada pelanggan pada kategori ini.</li>`}
+          </ul>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector(".modal-close").addEventListener("click", () => backdrop.remove());
+    const exportBtn = backdrop.querySelector("#kpiExportBtn");
+    if (exportBtn && models.length) {
+      exportBtn.addEventListener("click", () => {
+        const csv = toCSV(rows, headers);
+        downloadFile("﻿" + csv, `${exportPrefix}-${Date.now()}.csv`, "text/csv;charset=utf-8");
+      });
+    }
+    backdrop.querySelectorAll("#kpiDetailList li[data-idpel]").forEach((li) => {
+      li.addEventListener("click", () => openCustomerDetail(li.dataset.idpel, onAfterCustomerChange));
+    });
   }
   
   function renderDashboard(root) {
@@ -3865,16 +4052,16 @@ const Mod_views_dashboard = (function(){
         </div>
   
         <div class="kpi-grid">
-          <div class="card kpi-card"><div class="kpi-label">Total Pelanggan Target</div><div class="kpi-value">${formatNumber(filtered.length)}</div><div class="kpi-sub">${prioritasTinggiAktif.length} masih perlu tindakan</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Prioritas Tinggi (Aktif)</div><div class="kpi-value danger">${formatNumber(prioritasTinggiAktif.length)}</div><div class="kpi-sub">belum tuntas, perlu probing</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Sudah Tambah Daya</div><div class="kpi-value ok">${formatNumber(tersambungAll.length + consistency.length)}</div><div class="kpi-sub">${consistency.length} belum sinkron di pipeline</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Tersambung (Bulan Ini)</div><div class="kpi-value">${formatNumber(tersambungThisMonth.length)}</div><div class="kpi-sub">${deltaVsLastMonth >= 0 ? "+" : ""}${deltaVsLastMonth} vs bulan lalu</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Capaian vs Target Bulanan</div><div class="kpi-value">${capaianPct}%</div><div class="kpi-sub">Target: ${targetBulanan}/bulan</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Realisasi Biaya</div><div class="kpi-value" style="font-size:16px;">${formatRupiah(realisasiBiaya)}</div><div class="kpi-sub">${tersambungAll.length} transaksi selesai</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Realisasi Tambah Daya</div><div class="kpi-value" style="font-size:16px;">${realisasiKVA.toFixed(1)} kVA</div><div class="kpi-sub">akumulasi Tersambung</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Estimasi Potensi Pendapatan</div><div class="kpi-value" style="font-size:16px;">${formatRupiah(estimasiPendapatan)}</div><div class="kpi-sub">dari target belum closing</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Tidak Bisa Dikunjungi</div><div class="kpi-value">${formatNumber(tidakBisaDikunjungi.length)}</div><div class="kpi-sub">lokasi ditandai tidak aman</div></div>
-          <div class="card kpi-card"><div class="kpi-label">Sudah Tambah Daya (Info Lain)</div><div class="kpi-value" style="color:#7A3FE0;">${formatNumber(externallyUpgradedFiltered.length)}</div><div class="kpi-sub">naik daya lewat jalur lain, sudah tidak jadi target aktif</div></div>
+          <div class="card kpi-card" data-kpi="total"><div class="kpi-label">Total Pelanggan Target</div><div class="kpi-value">${formatNumber(filtered.length)}</div><div class="kpi-sub">${prioritasTinggiAktif.length} masih perlu tindakan</div></div>
+          <div class="card kpi-card" data-kpi="prioritasTinggi"><div class="kpi-label">Prioritas Tinggi (Aktif)</div><div class="kpi-value danger">${formatNumber(prioritasTinggiAktif.length)}</div><div class="kpi-sub">belum tuntas, perlu probing</div></div>
+          <div class="card kpi-card" data-kpi="sudahTambahDaya"><div class="kpi-label">Sudah Tambah Daya</div><div class="kpi-value ok">${formatNumber(tersambungAll.length + consistency.length)}</div><div class="kpi-sub">${consistency.length} belum sinkron di pipeline</div></div>
+          <div class="card kpi-card" data-kpi="tersambungBulanIni"><div class="kpi-label">Tersambung (Bulan Ini)</div><div class="kpi-value">${formatNumber(tersambungThisMonth.length)}</div><div class="kpi-sub">${deltaVsLastMonth >= 0 ? "+" : ""}${deltaVsLastMonth} vs bulan lalu</div></div>
+          <div class="card kpi-card" data-kpi="capaian"><div class="kpi-label">Capaian vs Target Bulanan</div><div class="kpi-value">${capaianPct}%</div><div class="kpi-sub">Target: ${targetBulanan}/bulan</div></div>
+          <div class="card kpi-card" data-kpi="realisasiBiaya"><div class="kpi-label">Realisasi Biaya</div><div class="kpi-value" style="font-size:16px;">${formatRupiah(realisasiBiaya)}</div><div class="kpi-sub">${tersambungAll.length} transaksi selesai</div></div>
+          <div class="card kpi-card" data-kpi="realisasiDaya"><div class="kpi-label">Realisasi Tambah Daya</div><div class="kpi-value" style="font-size:16px;">${realisasiKVA.toFixed(1)} kVA</div><div class="kpi-sub">akumulasi Tersambung</div></div>
+          <div class="card kpi-card" data-kpi="estimasiPendapatan"><div class="kpi-label">Estimasi Potensi Pendapatan</div><div class="kpi-value" style="font-size:16px;">${formatRupiah(estimasiPendapatan)}</div><div class="kpi-sub">dari target belum closing</div></div>
+          <div class="card kpi-card" data-kpi="tidakBisaDikunjungi"><div class="kpi-label">Tidak Bisa Dikunjungi</div><div class="kpi-value">${formatNumber(tidakBisaDikunjungi.length)}</div><div class="kpi-sub">lokasi ditandai tidak aman</div></div>
+          <div class="card kpi-card" data-kpi="infoLain"><div class="kpi-label">Sudah Tambah Daya (Info Lain)</div><div class="kpi-value" style="color:#7A3FE0;">${formatNumber(externallyUpgradedFiltered.length)}</div><div class="kpi-sub">naik daya lewat jalur lain, sudah tidak jadi target aktif</div></div>
         </div>
   
         <div class="grid-2" style="margin-top:14px;">
@@ -3970,18 +4157,84 @@ const Mod_views_dashboard = (function(){
     root.querySelector("#fPeriod").addEventListener("change", (e) => { state.periodMonths = Number(e.target.value); renderDashboard(root); });
   
     root.querySelector("#exportExcel").addEventListener("click", () => {
-      const rows = filtered.map((m) => ({
-        IDPEL: m.idpel, Nama: m.nama, Rute: m.rute, Petugas: m.petugas, SubKategori: m.subKategori,
-        Skor: m.score, JamNyala: m.avgJN, Status: m.statusProbing, TargetDaya: m.targetDaya || "",
-        Biaya: m.biayaPenyambungan || "", TanggalUpdate: m.tanggalUpdateTerakhir || "",
-      }));
-      const csv = toCSV(rows, ["IDPEL", "Nama", "Rute", "Petugas", "SubKategori", "Skor", "JamNyala", "Status", "TargetDaya", "Biaya", "TanggalUpdate"]);
+      const csv = toCSV(defaultExportRows(filtered), DEFAULT_EXPORT_HEADERS);
       downloadFile("﻿" + csv, `gemar-tambah-daya-${Date.now()}.csv`, "text/csv;charset=utf-8");
     });
     root.querySelector("#printPdf").addEventListener("click", () => window.print());
   
     root.querySelectorAll("#agingList li[data-idpel], #consistencyList li[data-idpel], #externalUpgradeList li[data-idpel]").forEach((li) => {
       li.addEventListener("click", () => openCustomerDetail(li.dataset.idpel, () => renderDashboard(root)));
+    });
+  
+    // Every KPI card opens a detail modal on click (see openKpiDetailModal above) - each entry here
+    // says which customers back that card's number, how to label each row, and what the per-card
+    // export should contain. Reconciled 1:1 against the number shown on the card itself so a
+    // petugas can always trust "click the number, see exactly those customers".
+    const kpiConfigs = {
+      total: { title: "Total Pelanggan Target", models: filtered },
+      prioritasTinggi: { title: "Prioritas Tinggi (Aktif)", models: prioritasTinggiAktif },
+      sudahTambahDaya: {
+        title: "Sudah Tambah Daya",
+        // Tersambung (closed in this app's own pipeline) + consistency (meter data already shows a
+        // daya increase even though pipeline status hasn't caught up yet) - together they match the
+        // count shown on the card. consistencyFlag by definition requires status !== "Tersambung"
+        // (see scoring.js), so these two groups never overlap - no dedup needed.
+        models: [...tersambungAll, ...consistency],
+      },
+      tersambungBulanIni: { title: "Tersambung (Bulan Ini)", models: tersambungThisMonth },
+      capaian: { title: "Capaian vs Target Bulanan (Tersambung Bulan Ini)", models: tersambungThisMonth },
+      realisasiBiaya: {
+        title: "Realisasi Biaya",
+        models: tersambungAll,
+        rowMeta: (m) => formatRupiah(m.biayaPenyambungan || 0),
+      },
+      realisasiDaya: {
+        title: "Realisasi Tambah Daya",
+        models: tersambungAll,
+        rowMeta: (m) => {
+          const dari = m.dayaChangeHistory.length ? m.dayaChangeHistory[0].dari : m.daya;
+          const ke = m.targetDaya || m.daya;
+          return `${(Math.max(0, (ke - dari) / 1000)).toFixed(1)} kVA`;
+        },
+      },
+      estimasiPendapatan: {
+        title: "Estimasi Potensi Pendapatan",
+        models: pipelineOpen,
+        rowMeta: (m) => {
+          const target = m.targetDaya || DAYA_LEVELS_LIST.find((lvl) => lvl > m.daya) || m.daya;
+          const res = lookupCost(costTable, m.daya, target);
+          const val = res == null ? 0 : (typeof res === "object" ? res.value : res);
+          return formatRupiah(Math.max(0, val));
+        },
+      },
+      tidakBisaDikunjungi: { title: "Tidak Bisa Dikunjungi", models: tidakBisaDikunjungi },
+      infoLain: {
+        title: "Sudah Tambah Daya (Info Lain)",
+        models: externallyUpgradedFiltered,
+        rowMeta: (m) => `${formatVA(m.daya)} → ${formatVA(m.dayaTerkiniEksternal)}${m.tanggalUpdateDayaEksternal ? " · " + formatDate(m.tanggalUpdateDayaEksternal) : ""}`,
+        exportRows: externallyUpgradedFiltered.map((m) => ({
+          IDPEL: m.idpel, Nama: m.nama, Rute: m.rute, Petugas: m.petugas,
+          DayaLama: m.daya, DayaTerbaru: m.dayaTerkiniEksternal, TanggalUpdate: m.tanggalUpdateDayaEksternal || "",
+          Catatan: m.catatanUpdateDayaEksternal || "",
+        })),
+        exportHeaders: ["IDPEL", "Nama", "Rute", "Petugas", "DayaLama", "DayaTerbaru", "TanggalUpdate", "Catatan"],
+      },
+    };
+  
+    root.querySelectorAll(".kpi-card[data-kpi]").forEach((card) => {
+      card.addEventListener("click", () => {
+        const cfg = kpiConfigs[card.dataset.kpi];
+        if (!cfg) return;
+        openKpiDetailModal({
+          title: cfg.title,
+          models: cfg.models,
+          rowMeta: cfg.rowMeta,
+          exportRows: cfg.exportRows,
+          exportHeaders: cfg.exportHeaders,
+          exportPrefix: `gemar-tambah-daya-${card.dataset.kpi}`,
+          onAfterCustomerChange: () => renderDashboard(root),
+        });
+      });
     });
   }
   
