@@ -1435,6 +1435,10 @@ const Mod_mapEngine = (function(){
   
   const DITOLAK_COLOR = "#9AA5B1";
   
+  // Kantor ULP Nabire Kota - titik awal rute harian tim lapangan (koordinat dikonfirmasi oleh Eva).
+  // Dipakai untuk menggambar penanda kantor + menautkan garis rute mulai dari sini saat mode rute aktif.
+  const ULP_NABIRE_KOTA = { lat: -3.362182, lng: 135.501514 };
+  
   function priorityColor(customer) {
     if (customer.subKategori === "Tinggi") return "#E4483C";
     if (customer.subKategori === "Sedang") return "#F2A93C";
@@ -1483,9 +1487,12 @@ const Mod_mapEngine = (function(){
     return clusters;
   }
   
-  function computeBounds(customers) {
+  function computeBounds(customers, includeOffice) {
     const lats = customers.map((c) => c.lat).filter((v) => typeof v === "number");
     const lngs = customers.map((c) => c.lng).filter((v) => typeof v === "number");
+    // In route mode, fold the office coordinate into the bounds too, so the office marker + the
+    // first leg of the route line are never fitted out of view off-screen.
+    if (includeOffice) { lats.push(ULP_NABIRE_KOTA.lat); lngs.push(ULP_NABIRE_KOTA.lng); }
     if (!lats.length) return { minLat: -3.45, maxLat: -3.25, minLng: 135.35, maxLng: 135.6 };
     const pad = 0.015;
     return {
@@ -1530,7 +1537,7 @@ const Mod_mapEngine = (function(){
   
     setCustomers(customers) {
       this.customers = customers;
-      this.bounds = computeBounds(customers);
+      this.bounds = computeBounds(customers, this.routeMode);
       this.draw();
     }
   
@@ -1648,15 +1655,17 @@ const Mod_mapEngine = (function(){
       // Route mode: draw a dashed line connecting stops 1 -> 2 -> 3 ... in order, underneath
       // the markers, so the suggested visiting path is visible on the map itself (not just
       // implied by the numbers).
+      let officePt = null;
       if (this.routeMode) {
+        officePt = this._project(ULP_NABIRE_KOTA.lat, ULP_NABIRE_KOTA.lng);
         const ordered = pts
           .filter((p) => p.customer._routeOrder)
           .sort((a, b) => a.customer._routeOrder - b.customer._routeOrder);
-        if (ordered.length > 1) {
+        if (ordered.length >= 1) {
           ctx.save();
           ctx.beginPath();
-          ctx.moveTo(ordered[0].x, ordered[0].y);
-          for (let i = 1; i < ordered.length; i++) ctx.lineTo(ordered[i].x, ordered[i].y);
+          ctx.moveTo(officePt.x, officePt.y);
+          for (let i = 0; i < ordered.length; i++) ctx.lineTo(ordered[i].x, ordered[i].y);
           ctx.strokeStyle = this.theme === "dark" ? "#FFC53D" : "#0A2E52";
           ctx.lineWidth = 2.5;
           ctx.setLineDash([8, 6]);
@@ -1674,6 +1683,30 @@ const Mod_mapEngine = (function(){
         }
       });
   
+      // Office marker drawn last so it always sits on top of customer pins/clusters.
+      if (this.routeMode && officePt) this._drawOfficeMarker(ctx, officePt.x, officePt.y);
+  
+      ctx.restore();
+    }
+  
+    // Square "K" marker (Kantor) for the ULP Nabire Kota office - visually distinct from the round
+    // customer pins so the route's actual starting point is obvious at a glance.
+    _drawOfficeMarker(ctx, x, y) {
+      if (x < -20 || y < -20 || x > this.width + 20 || y > this.height + 20) return;
+      const r = 10;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x - r, y - r, r * 2, r * 2);
+      ctx.fillStyle = this.theme === "dark" ? "#FFC53D" : "#0A2E52";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#fff";
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 10px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("K", x, y + 0.5);
       ctx.restore();
     }
   
@@ -1809,7 +1842,7 @@ const Mod_mapEngine = (function(){
   
     setCustomers(customers) {
       this.customers = customers;
-      const bounds = computeBounds(customers);
+      const bounds = computeBounds(customers, this.routeMode);
       try {
         this.map.fitBounds([[bounds.minLat, bounds.minLng], [bounds.maxLat, bounds.maxLng]], { padding: [20, 20] });
       } catch (e) {}
@@ -1832,15 +1865,17 @@ const Mod_mapEngine = (function(){
         ? clusterByPixel(pts, radiusPx)
         : pts.map((p) => ({ x: p.x, y: p.y, points: [p] }));
   
-      // Route mode: draw a dashed polyline connecting the stops in visiting order (1 -> 2 -> 3 ...)
-      // so the route is visible directly on the tiles, not only as numbered pins.
+      // Route mode: draw a dashed polyline connecting the stops in visiting order, starting at the
+      // ULP Nabire Kota office (0 -> 1 -> 2 -> 3 ...) so the route is visible directly on the tiles,
+      // not only as numbered pins - plus a distinct "K" marker for the office itself.
       if (this.routeMode) {
         const ordered = this.customers
           .filter((c) => c._routeOrder && typeof c.lat === "number" && typeof c.lng === "number")
           .sort((a, b) => a._routeOrder - b._routeOrder)
           .map((c) => [c.lat, c.lng]);
-        if (ordered.length > 1) {
-          this.routeLine = this.L.polyline(ordered, {
+        const path = [[ULP_NABIRE_KOTA.lat, ULP_NABIRE_KOTA.lng], ...ordered];
+        if (path.length > 1) {
+          this.routeLine = this.L.polyline(path, {
             color: this.theme === "dark" ? "#FFC53D" : "#0A2E52",
             weight: 3,
             opacity: 0.85,
@@ -1848,6 +1883,15 @@ const Mod_mapEngine = (function(){
           }).addTo(this.map);
           this.routeLine.bringToBack();
         }
+        const officeIcon = this.L.divIcon({
+          className: "",
+          html: `<div style="width:22px;height:22px;border-radius:4px;background:${this.theme === "dark" ? "#FFC53D" : "#0A2E52"};border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;">K</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        });
+        this.L.marker([ULP_NABIRE_KOTA.lat, ULP_NABIRE_KOTA.lng], { icon: officeIcon, zIndexOffset: 1000 })
+          .bindTooltip("Kantor ULP Nabire Kota", { direction: "top" })
+          .addTo(this.markersLayer);
       }
   
       clusters.forEach((cl) => {
@@ -3346,6 +3390,11 @@ const Mod_views_mapView = (function(){
   }
   
   // ---- Urutan kunjungan per Rute/RBM: terdekat -> terjauh (PRD: rencana rute per RBM) ----
+  // Titik awal rute = kantor ULP Nabire Kota (koordinat dikonfirmasi oleh Eva) - field team berangkat
+  // dari sini setiap hari, jadi urutan kunjungan (dan jarak "titik awal rute") dihitung mulai dari
+  // sini, bukan dari pelanggan yang kebetulan paling barat-daya seperti pendekatan sebelumnya.
+  const ULP_NABIRE_KOTA = { lat: -3.362182, lng: 135.501514 };
+  
   function distanceKm(a, b) {
     const R = 6371;
     const dLat = ((b.lat - a.lat) * Math.PI) / 180;
@@ -3356,19 +3405,24 @@ const Mod_views_mapView = (function(){
   }
   
   // Greedy nearest-neighbour walk (not a true optimal TSP, but a good-enough visiting order for
-  // a field team): start from the southwest-most customer on the route, then repeatedly hop to
-  // whichever remaining customer is closest to the last one visited.
+  // a field team): start from whichever customer is nearest to the ULP Nabire Kota office (that's
+  // where the day's route actually begins), then repeatedly hop to whichever remaining customer is
+  // closest to the last one visited.
   function orderByNearestPath(customers) {
     const withCoord = customers.filter((c) => typeof c.lat === "number" && typeof c.lng === "number");
     const noCoord = customers.filter((c) => !(typeof c.lat === "number" && typeof c.lng === "number"));
-    if (withCoord.length <= 1) return withCoord.map((c) => ({ ...c, _stepKm: 0 })).concat(noCoord);
+    if (withCoord.length === 0) return noCoord;
+    if (withCoord.length === 1) {
+      return [{ ...withCoord[0], _stepKm: distanceKm(ULP_NABIRE_KOTA, withCoord[0]) }].concat(noCoord);
+    }
   
-    let startIdx = 0;
-    for (let i = 1; i < withCoord.length; i++) {
-      if (withCoord[i].lat + withCoord[i].lng < withCoord[startIdx].lat + withCoord[startIdx].lng) startIdx = i;
+    let startIdx = 0, startDist = Infinity;
+    for (let i = 0; i < withCoord.length; i++) {
+      const d = distanceKm(ULP_NABIRE_KOTA, withCoord[i]);
+      if (d < startDist) { startDist = d; startIdx = i; }
     }
     const remaining = withCoord.slice();
-    const ordered = [{ ...remaining.splice(startIdx, 1)[0], _stepKm: 0 }];
+    const ordered = [{ ...remaining.splice(startIdx, 1)[0], _stepKm: startDist }];
     while (remaining.length) {
       const last = ordered[ordered.length - 1];
       let nearestIdx = 0, nearestDist = Infinity;
@@ -3618,7 +3672,7 @@ const Mod_views_mapView = (function(){
             ${state.eksternalMode
               ? `<div class="cmeta" style="color:#7A3FE0; font-weight:600;">Info: naik ke ${m.dayaTerkiniEksternal ?? "-"} VA${m.tanggalUpdateDayaEksternal ? ` pada ${formatDate(m.tanggalUpdateDayaEksternal)}` : ""}${m.catatanUpdateDayaEksternal ? ` · ${escapeHtml(m.catatanUpdateDayaEksternal)}` : ""}</div>`
               : routeMode
-                ? `<div class="cmeta">${m._routeOrder === 1 ? "Titik awal rute" : `${m._stepKm != null ? m._stepKm.toFixed(1) + " km" : "jarak n/a"} dari titik sebelumnya`}</div>`
+                ? `<div class="cmeta">${m._routeOrder === 1 ? `${m._stepKm != null ? m._stepKm.toFixed(1) + " km" : "jarak n/a"} dari ULP Nabire Kota` : `${m._stepKm != null ? m._stepKm.toFixed(1) + " km" : "jarak n/a"} dari titik sebelumnya`}</div>`
                 : `<div class="cmeta">Skor ${m.score} · JN ${m.avgJN}</div>`}
           </div>
           <span class="status-pill ${statusClass(m.statusProbing)}">${m.statusProbing}</span>
