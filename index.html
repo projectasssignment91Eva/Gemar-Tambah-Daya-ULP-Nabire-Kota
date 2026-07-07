@@ -223,20 +223,35 @@ img { max-width: 100%; }
   min-height: 0; overflow-y: auto;
 }
 .map-canvas-wrap { flex: 1; position: relative; background: var(--map-bg); }
-.map-search { padding: 10px; border-bottom: 1px solid var(--border); display:flex; gap:8px; }
-.map-search input { flex: 1; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; }
+.map-search { padding: 8px 10px; border-bottom: 1px solid var(--border); display:flex; gap:8px; }
+.map-search input { flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; }
 .map-search button { border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius-sm); padding: 0 10px; color: var(--text); }
-.chip-row { display: flex; gap: 6px; padding: 8px 10px 4px; flex-wrap: wrap; }
+/* Sync button + data-source badge share one compact row, with the last-synced timestamp as a
+   single small line right underneath - this used to be 3 separate rows (button+status, badge,
+   then chips), which pushed the actual customer list further down than it needed to be. */
+.map-sync-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 0; }
+.map-sync-meta { padding: 3px 10px 6px; font-size: 10.5px; color: var(--text-muted); }
+.data-badge { padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 10.5px; flex-shrink: 0; white-space: nowrap; }
+.data-badge.real { background: #DCFCE7; color: #166534; }
+.data-badge.dummy { background: #FEF3C7; color: #92400E; }
+.data-badge.none { background: #F1F5F9; color: #475569; }
+.chip-row { display: flex; gap: 6px; padding: 6px 10px; flex-wrap: wrap; }
 .chip {
-  border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 700; border: 1px solid transparent;
+  border-radius: 999px; padding: 4px 10px; font-size: 11.5px; font-weight: 700; border: 1px solid transparent;
   background: var(--surface-2); color: var(--text-muted);
 }
 .chip.tinggi.active { background: var(--prio-tinggi); color: #fff; }
 .chip.sedang.active { background: var(--prio-sedang); color: #3a2900; }
 .chip.all.active { background: var(--brand-navy); color: #fff; }
+/* "Sudah Tambah Daya (Info Lain)" - lives in the same chip row as the Semua/Tinggi/Sedang filter
+   chips (used to be its own full-width button below, costing an extra row), but keeps a distinct
+   purple outline since it's a different kind of toggle (an audit view, not a subKategori filter). */
+.chip.eksternal { border-color: #7A3FE0; color: #7A3FE0; background: #fff; }
+.chip.eksternal.active { background: #7A3FE0; color: #fff; }
+[data-theme="dark"] .chip.eksternal { background: transparent; }
 .filter-toggle {
-  margin: 0 10px 8px; color: var(--brand-navy); background:none; border:none;
-  display:flex; align-items:center; gap:8px; text-align:left; padding: 6px 4px; border-radius: var(--radius-sm);
+  margin: 0 10px 6px; color: var(--brand-navy); background:none; border:none;
+  display:flex; align-items:center; gap:8px; text-align:left; padding: 5px 4px; border-radius: var(--radius-sm);
 }
 .filter-toggle:hover { background: var(--surface-2); }
 .filter-toggle .ft-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -244,14 +259,15 @@ img { max-width: 100%; }
 .filter-toggle .ft-sub { font-size: 10.5px; font-weight: 400; color: var(--text-muted); white-space: normal; line-height: 1.3; }
 .filter-toggle .ico:last-child { flex-shrink: 0; }
 [data-theme="dark"] .filter-toggle { color: var(--brand-yellow); }
-.filter-panel { padding: 0 10px 10px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; }
-.filter-panel .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.filter-panel { padding: 0 10px 8px; border-bottom: 1px solid var(--border); display: grid; gap: 6px; }
+.filter-panel .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.filter-panel-row { display: flex; justify-content: space-between; align-items: center; }
 .status-chip-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
 }
 .status-chip-grid .chip.status-chip {
-  border-radius: var(--radius-sm); text-align: left; padding: 7px 9px; font-weight: 600;
-  font-size: 11.5px; line-height: 1.2; width: 100%; box-sizing: border-box;
+  border-radius: var(--radius-sm); text-align: left; padding: 6px 8px; font-weight: 600;
+  font-size: 11px; line-height: 1.2; width: 100%; box-sizing: border-box;
   white-space: normal; border: 1px solid var(--border);
 }
 .status-chip-grid .chip.status-chip.active {
@@ -260,7 +276,7 @@ img { max-width: 100%; }
 [data-theme="dark"] .status-chip-grid .chip.status-chip.active { background: var(--brand-yellow); color: #3a2900; border-color: var(--brand-yellow); }
 .customer-list { flex: 1; overflow: auto; }
 .customer-row {
-  display: flex; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: flex-start;
+  display: flex; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); align-items: flex-start;
 }
 .customer-row:hover { background: var(--surface-2); cursor: pointer; }
 .prio-dot { width: 11px; height: 11px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
@@ -271,8 +287,8 @@ img { max-width: 100%; }
   font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center;
 }
 [data-theme="dark"] .route-order-badge { background: var(--brand-yellow); color: #3a2900; }
-.customer-row .cname { font-weight: 700; font-size: 13.5px; }
-.customer-row .cmeta { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; }
+.customer-row .cname { font-weight: 700; font-size: 13px; }
+.customer-row .cmeta { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 .status-pill {
   font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; display: inline-block;
   background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border);
@@ -1329,6 +1345,11 @@ const Mod_scoring = (function(){
         kontak1: ident["Kontak 1"] || "",
         kontak2: ident["Kontak 2"] || "",
         tarif: lastRow.TARIF || "",
+        // KOGOL = kode/golongan tarif pelanggan - optional column in "Data Pemakaian", added on
+        // request to let a petugas filter by golongan the same way they already can by Rute/Tarif.
+        // Missing/blank when the sheet doesn't have this column yet - filter UI just shows no
+        // options in that case, nothing breaks.
+        kogol: lastRow.KOGOL || "",
         daya: lastRow.DAYA,
         targetDaya: prog.TargetDaya || null,
         biayaPenyambungan: prog.BiayaPenyambungan || null,
@@ -3255,6 +3276,7 @@ const Mod_views_mapView = (function(){
     rute: "",
     petugas: "",
     tarif: "",
+    kogol: "", // KOGOL = kode/golongan tarif pelanggan, from the optional "KOGOL" column in "Data Pemakaian"
     jnMin: "", // minimum average Jam Nyala (JN) - e.g. "720" to find only the heaviest-usage customers
     dateFrom: "",
     dateTo: "",
@@ -3351,6 +3373,7 @@ const Mod_views_mapView = (function(){
       if (state.rute && m.rute !== state.rute) return false;
       if (state.petugas && m.petugas !== state.petugas) return false;
       if (state.tarif && m.tarif !== state.tarif) return false;
+      if (state.kogol && m.kogol !== state.kogol) return false;
       if (state.jnMin !== "" && state.jnMin != null && !(m.avgJN >= Number(state.jnMin))) return false;
       if (state.dateFrom) {
         const d = daysAgo(m.tanggalUpdateTerakhir);
@@ -3375,6 +3398,10 @@ const Mod_views_mapView = (function(){
     const externalUpgradedCount = state.eksternalMode ? allModels.length : getExternallyUpgradedModels().length;
     const routes = [...new Set(allModels.map((m) => m.rute).filter(Boolean))].sort();
     const tarifs = [...new Set(allModels.map((m) => m.tarif).filter(Boolean))].sort();
+    // KOGOL (kode/golongan tarif) - optional column in "Data Pemakaian". Same pattern as
+    // routes/tarifs above: options come from whatever's actually in the loaded data, so this stays
+    // empty/harmless until Eva adds the column, and fills in automatically once she does.
+    const kogols = [...new Set(allModels.map((m) => m.kogol).filter(Boolean))].sort();
     // Petugas filter used to be built from PETUGAS_SEED - a hardcoded list of DUMMY petugas names
     // from dummyData.js - so it always showed the same sample names ("Rudi Hartono", "Sitti
     // Rahma", ...) no matter what was actually pulled from Google Sheets. Build it from the real,
@@ -3392,33 +3419,33 @@ const Mod_views_mapView = (function(){
           <div class="map-search">
             <input type="text" id="mapSearch" placeholder="Cari nama / ID pelanggan / alamat..." value="${escapeHtml(state.search)}" />
           </div>
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
-            <button class="btn secondary" id="mapSyncBtn" style="flex-shrink:0;" ${isGoogleConfigured() ? "" : "disabled"} title="${isGoogleConfigured() ? "Tarik data terbaru dari Google Sheets & langsung perbarui peta ini" : "Atur Client ID & Spreadsheet ID di Setelan dulu"}">
+          <div class="map-sync-row">
+            <button class="btn secondary sm" id="mapSyncBtn" ${isGoogleConfigured() ? "" : "disabled"} title="${isGoogleConfigured() ? "Tarik data terbaru dari Google Sheets & langsung perbarui peta ini" : "Atur Client ID & Spreadsheet ID di Setelan dulu"}">
               ${icon("sync")} Sinkron Data
             </button>
-            <span class="small-muted" id="mapSyncStatus">${Store.get("lastPull", null) ? `Terakhir sinkron: ${formatDateTime(Store.get("lastPull", null))}` : "Belum pernah sinkron"}</span>
+            <span class="data-badge ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "real" : ds === "dummy" ? "dummy" : "none"; })()}">
+              ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "● DATA ASLI" : ds === "dummy" ? "● CONTOH/DUMMY" : "Belum ada data"; })()}
+            </span>
           </div>
-          <div style="display:inline-block; margin-bottom:8px; padding:3px 9px; border-radius:999px; font-weight:700; font-size:11.5px; ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "background:#DCFCE7; color:#166534;" : ds === "dummy" ? "background:#FEF3C7; color:#92400E;" : "background:#F1F5F9; color:#475569;"; })()}">
-            ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "● DATA ASLI" : ds === "dummy" ? "● DATA CONTOH/DUMMY" : "Belum ada data"; })()}
-          </div>
+          <div class="map-sync-meta" id="mapSyncStatus">${Store.get("lastPull", null) ? `Terakhir sinkron: ${formatDateTime(Store.get("lastPull", null))}` : "Belum pernah sinkron"}</div>
           <div class="chip-row" id="chipRow">
             <button class="chip all ${state.subKategori === "semua" ? "active" : ""}" data-cat="semua">Semua</button>
             <button class="chip tinggi ${state.subKategori === "Tinggi" ? "active" : ""}" data-cat="Tinggi">Prioritas Tinggi</button>
             <button class="chip sedang ${state.subKategori === "Sedang" ? "active" : ""}" data-cat="Sedang">Sedang</button>
+            <button class="chip eksternal ${state.eksternalMode ? "active" : ""}" id="chipEksternal">
+              ${icon("warning")} Sudah Tambah Daya${externalUpgradedCount ? ` · ${externalUpgradedCount}` : ""}
+            </button>
           </div>
-          <button class="chip" id="chipEksternal" style="width:100%; margin-bottom:10px; justify-content:center; border:1px solid #7A3FE0; ${state.eksternalMode ? "background:#7A3FE0; color:#fff;" : "background:#fff; color:#7A3FE0;"}">
-            ${icon("warning")} Sudah Tambah Daya (Info Lain)${externalUpgradedCount ? ` · ${externalUpgradedCount}` : ""}
-          </button>
           <button class="filter-toggle" id="filterToggle">
             ${icon("filter")}
             <span class="ft-text">
               <span class="ft-title">Filter lanjutan</span>
-              <span class="ft-sub">Status probing, rute, petugas, tanggal, tarif, jam nyala</span>
+              <span class="ft-sub">Status probing, rute, petugas, tanggal, tarif, kogol, JN</span>
             </span>
             ${icon("chevronRight")}
           </button>
           <div class="filter-panel ${state.filterPanelOpen ? "" : "hidden"}" id="filterPanel">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="filter-panel-row">
               <span class="small-muted">Status Probing</span>
               <span>
                 <button class="link-btn" id="selAllStatus">Pilih Semua</button> ·
@@ -3434,8 +3461,9 @@ const Mod_views_mapView = (function(){
             </div>
             <div class="row2">
               <select id="filterTarif"><option value="">Semua Tarif/Daya</option>${tarifs.map((t) => `<option ${state.tarif === t ? "selected" : ""}>${t}</option>`).join("")}</select>
-              <div class="field" style="margin:0;"><label>Jam Nyala rata-rata minimal</label><input type="number" id="filterJnMin" placeholder="contoh: 720" value="${escapeHtml(state.jnMin)}" min="0" step="1"/></div>
+              <select id="filterKogol"><option value="">Semua Kogol</option>${kogols.map((k) => `<option ${state.kogol === k ? "selected" : ""}>${k}</option>`).join("")}</select>
             </div>
+            <div class="field" style="margin:0;"><label>JN rata-rata minimal</label><input type="number" id="filterJnMin" placeholder="contoh: 720" value="${escapeHtml(state.jnMin)}" min="0" step="1"/></div>
             <div class="row2">
               <div class="field" style="margin:0;"><label>Aktivitas dari</label><input type="date" id="filterDateFrom" value="${state.dateFrom}"/></div>
               <div class="field" style="margin:0;"><label>Aktivitas sampai</label><input type="date" id="filterDateTo" value="${state.dateTo}"/></div>
@@ -3483,7 +3511,7 @@ const Mod_views_mapView = (function(){
       // set (not just the first 30 shown) so numbering stays correct/consistent between the list
       // and the map even when there are more than 30 matching customers.
       const routeMode = !!(
-        state.rute || state.petugas || state.tarif || state.jnMin !== "" ||
+        state.rute || state.petugas || state.tarif || state.kogol || state.jnMin !== "" ||
         state.subKategori !== "semua" || state.statusProbing.size ||
         state.search || state.dateFrom || state.dateTo
       );
@@ -3516,7 +3544,7 @@ const Mod_views_mapView = (function(){
               ? `<div class="cmeta" style="color:#7A3FE0; font-weight:600;">Info: naik ke ${m.dayaTerkiniEksternal ?? "-"} VA${m.tanggalUpdateDayaEksternal ? ` pada ${formatDate(m.tanggalUpdateDayaEksternal)}` : ""}${m.catatanUpdateDayaEksternal ? ` · ${escapeHtml(m.catatanUpdateDayaEksternal)}` : ""}</div>`
               : routeMode
                 ? `<div class="cmeta">${m._routeOrder === 1 ? "Titik awal rute" : `${m._stepKm != null ? m._stepKm.toFixed(1) + " km" : "jarak n/a"} dari titik sebelumnya`}</div>`
-                : `<div class="cmeta">Skor ${m.score} · Jam nyala ${m.avgJN}</div>`}
+                : `<div class="cmeta">Skor ${m.score} · JN ${m.avgJN}</div>`}
           </div>
           <span class="status-pill ${statusClass(m.statusProbing)}">${m.statusProbing}</span>
         </div>
@@ -3622,6 +3650,7 @@ const Mod_views_mapView = (function(){
     root.querySelector("#filterRute").addEventListener("change", (e) => { state.rute = e.target.value; resetListPaging(); refreshList(); });
     root.querySelector("#filterPetugas").addEventListener("change", (e) => { state.petugas = e.target.value; resetListPaging(); refreshList(); });
     root.querySelector("#filterTarif").addEventListener("change", (e) => { state.tarif = e.target.value; resetListPaging(); refreshList(); });
+    root.querySelector("#filterKogol").addEventListener("change", (e) => { state.kogol = e.target.value; resetListPaging(); refreshList(); });
     root.querySelector("#filterJnMin").addEventListener("input", (e) => { state.jnMin = e.target.value; resetListPaging(); refreshList(); });
     root.querySelector("#filterDateFrom").addEventListener("change", (e) => { state.dateFrom = e.target.value; resetListPaging(); refreshList(); });
     root.querySelector("#filterDateTo").addEventListener("change", (e) => { state.dateTo = e.target.value; resetListPaging(); refreshList(); });
