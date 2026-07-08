@@ -380,6 +380,11 @@ img { max-width: 100%; }
    explicit height for the canvas/Leaflet container to size against. */
 .visit-plan-map-wrap { position: relative; height: 320px; background: var(--map-bg); }
 #visitMapCanvas { width: 100%; height: 100%; display: block; }
+.paste-idpel-input {
+  width: 100%; padding: 9px 11px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: 12.5px; font-family: monospace;
+  resize: vertical; min-height: 60px;
+}
 
 /* ---- Cards / KPI (dashboard) ---- */
 .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
@@ -3991,6 +3996,22 @@ const Mod_views_visitPlan = (function(){
     return buildCustomerModels({ identitas, pemakaian, progres, operasional, settings, dayaUpdate });
   }
   
+  // Splits pasted text into candidate IDPEL tokens - handles one-per-line (the common case when
+  // copying a column out of Excel/Sheets), comma/semicolon-separated, or just space-separated, and
+  // de-dupes. Deliberately permissive about the separator since Eva may paste from anywhere
+  // (Sheets, WhatsApp, a notes app).
+  function parseIdpelList(text) {
+    return [...new Set(text.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))];
+  }
+  
+  // Result of the last "Tempel Daftar IDPEL" attempt, kept as module-level state (not Store) so it
+  // survives the renderVisitPlan() re-render that follows every click, but resets on its own once a
+  // fresh paste replaces it - no need to persist this across app restarts.
+  let pasteResultMsg = null;
+  // Pre-fills the textarea on the next render - set to just the NOT-found IDs after a paste, so
+  // Eva can fix typos and resubmit without retyping everything that already matched.
+  let pasteTextareaSeed = "";
+  
   // The share text lists the whole ordered plan (name, address, distance from the previous stop) so
   // it's still useful to a petugas even if they open it from a plain WhatsApp chat with no access to
   // this app - e.g. sharing today's plan with a teammate who isn't logged in on this device.
@@ -4027,6 +4048,14 @@ const Mod_views_visitPlan = (function(){
             <a class="btn secondary sm" id="shareWaBtn" target="_blank" href="https://wa.me/?text=${buildShareText(ordered)}" ${ordered.length ? "" : "aria-disabled=\"true\" style=\"opacity:.4;pointer-events:none;\""}>${icon("whatsapp")} Bagikan via WhatsApp</a>
             <button class="btn danger sm" id="clearAllVisitBtn" ${ordered.length ? "" : "disabled"}>${icon("trash")} Kosongkan Semua</button>
           </div>
+        </div>
+  
+        <div class="card">
+          <div class="card-title">Tempel Daftar IDPEL</div>
+          <p class="small-muted">Salin daftar ID Pelanggan dari mana saja (Excel/Sheets, WhatsApp, dll) - satu per baris, atau dipisah spasi/koma - lalu tempel di sini. Yang cocok dengan data pelanggan langsung masuk ke Kunjungan Hari Ini.</p>
+          <textarea id="pasteIdpelInput" rows="3" placeholder="Contoh:&#10;424510003445&#10;424510008714" class="paste-idpel-input">${escapeHtml(pasteTextareaSeed)}</textarea>
+          <button class="btn secondary sm" id="pasteAddBtn" style="margin-top:8px;">${icon("plus")} Tambahkan ke Kunjungan Hari Ini</button>
+          ${pasteResultMsg ? `<div class="small-muted" style="margin-top:8px;">${pasteResultMsg}</div>` : ""}
         </div>
   
         ${ordered.length ? `
@@ -4091,6 +4120,27 @@ const Mod_views_visitPlan = (function(){
       });
     }
   
+    const pasteBtn = root.querySelector("#pasteAddBtn");
+    const pasteInput = root.querySelector("#pasteIdpelInput");
+    if (pasteBtn) pasteBtn.addEventListener("click", () => {
+      const tokens = parseIdpelList(pasteInput.value);
+      if (!tokens.length) { toast("Tempelkan daftar IDPEL dulu.", "err"); return; }
+      const set = getVisitPlanIds();
+      const found = [], notFound = [];
+      tokens.forEach((idpel) => {
+        if (modelByIdpel.has(idpel)) { set.add(idpel); found.push(idpel); }
+        else notFound.push(idpel);
+      });
+      setVisitPlanIds(set);
+      pasteResultMsg = `${found.length} pelanggan ditambahkan ke Kunjungan Hari Ini.`
+        + (notFound.length
+          ? ` ${notFound.length} IDPEL tidak ditemukan di data pelanggan (dibiarkan di kotak, cek lagi lalu tempel ulang): ${escapeHtml(notFound.slice(0, 10).join(", "))}${notFound.length > 10 ? ", ..." : ""}`
+          : "");
+      pasteTextareaSeed = notFound.join("\n");
+      toast(found.length ? `${found.length} pelanggan ditambahkan ke Kunjungan Hari Ini.` : "Tidak ada IDPEL yang cocok dengan data pelanggan.", found.length ? "ok" : "err");
+      renderVisitPlan(root);
+    });
+  
     root.querySelector("#backToPetaBtn").addEventListener("click", () => navigate("map"));
   
     const clearBtn = root.querySelector("#clearAllVisitBtn");
@@ -4098,6 +4148,8 @@ const Mod_views_visitPlan = (function(){
       if (!ordered.length) return;
       if (!confirm(`Kosongkan seluruh daftar Kunjungan Hari Ini (${ordered.length} pelanggan)?`)) return;
       setVisitPlanIds(new Set());
+      pasteResultMsg = null;
+      pasteTextareaSeed = "";
       toast("Daftar Kunjungan Hari Ini dikosongkan.", "ok");
       renderVisitPlan(root);
     });
