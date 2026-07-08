@@ -226,20 +226,18 @@ img { max-width: 100%; }
 .map-search { padding: 8px 10px; border-bottom: 1px solid var(--border); display:flex; gap:8px; }
 .map-search input { flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; }
 .map-search button { border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius-sm); padding: 0 10px; color: var(--text); }
-/* Sync button + data-source badge share one compact row, with the last-synced timestamp as a
-   single small line right underneath - this used to be 3 separate rows (button+status, badge,
-   then chips), which pushed the actual customer list further down than it needed to be. */
-.map-sync-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px 0; }
-.map-sync-meta { padding: 3px 10px 6px; font-size: 10.5px; color: var(--text-muted); }
+/* Sync button + "Kunjungan Hari Ini" entry point share one compact row (two buttons side by
+   side), with the data-source badge + last-synced time folded into a single small line right
+   underneath - keeps the header to 4 slim rows (search, buttons, status line, chips) instead of
+   stacking each piece as its own full row, so the actual customer list starts higher up. */
+.map-sync-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px 0; flex-wrap: wrap; }
+.map-sync-row .btn { flex: 1; min-width: 0; white-space: nowrap; }
+.map-sync-meta { padding: 3px 10px 6px; font-size: 10.5px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .data-badge { padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 10.5px; flex-shrink: 0; white-space: nowrap; }
 .data-badge.real { background: #DCFCE7; color: #166534; }
 .data-badge.dummy { background: #FEF3C7; color: #92400E; }
 .data-badge.none { background: #F1F5F9; color: #475569; }
-/* "Kunjungan Hari Ini" entry point row, right under the sync status line - shows the live count
-   of currently-selected customers so checking boxes below gives immediate feedback. */
-.visit-plan-bar { display: flex; align-items: center; gap: 8px; padding: 4px 10px 2px; flex-wrap: wrap; }
-.visit-plan-bar .small-muted { font-size: 10.5px; }
-.chip-row { display: flex; gap: 6px; padding: 6px 10px; flex-wrap: wrap; }
+.chip-row { display: flex; gap: 6px; padding: 4px 10px 6px; flex-wrap: wrap; }
 .chip {
   border-radius: 999px; padding: 4px 10px; font-size: 11.5px; font-weight: 700; border: 1px solid transparent;
   background: var(--surface-2); color: var(--text-muted);
@@ -408,6 +406,11 @@ img { max-width: 100%; }
 @media (max-width: 720px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .map-sidebar { width: 100%; position: absolute; inset: 0; z-index: 1110; transition: transform 0.2s; }
+  /* The floating "Lihat Peta" pill sits at bottom:66px over the sidebar - without this, it lands
+     right on top of the list footer's "Menampilkan..." text/pagination when scrolled to the end,
+     making both illegible. Extra bottom padding on the scroll area gives it clear space to float
+     over instead. */
+  .map-sidebar .list-footer { padding-bottom: 76px; }
   .map-layout { position: relative; overflow: hidden; }
   .map-layout.show-map .map-sidebar { transform: translateX(-100%); pointer-events: none; }
   .mobile-view-toggle {
@@ -2352,12 +2355,24 @@ const Mod_google_sheetsApi = (function(){
     return true;
   }
   
+  // Whether we already hold a live token from earlier in this session (e.g. from a prior
+  // Sinkronisasi pull, or an earlier manual "Ambil dari Drive" tap), WITHOUT triggering a new
+  // consent popup. requestAccessToken() would happily fetch one silently too, but Chrome/Safari
+  // block popups that aren't a direct result of a user click/tap - calling requestAccessToken()
+  // automatically (e.g. as soon as a customer detail sheet opens) risks a silently-blocked popup
+  // with a confusing failure. Callers that want to auto-fetch something in the background (see
+  // customerDetail.js's Drive photo auto-check) should gate on this first and only fall back to
+  // a manual "tap this button" flow when it's false.
+  function hasValidAccessToken() {
+    return !!(accessToken && Date.now() < tokenExpiry - 30000);
+  }
+  
   function disconnectGoogle() {
     accessToken = null;
     tokenExpiry = 0;
   }
   
-  return {getGoogleConfig, isGoogleConfigured, ensureGisLoaded, requestAccessToken, fetchTab, pullAllData, pullProgres, pushProgresRow, disconnectGoogle};
+  return {getGoogleConfig, isGoogleConfigured, ensureGisLoaded, requestAccessToken, fetchTab, pullAllData, pullProgres, pushProgresRow, hasValidAccessToken, disconnectGoogle};
 })();
 
 const Mod_google_driveApi = (function(){
@@ -2388,6 +2403,19 @@ const Mod_google_driveApi = (function(){
     return (data.files || [])[0] || null;
   }
   
+  // Download the actual image bytes for a file found via findPhotoForCustomer() above, so
+  // customerDetail.js can compress+store it locally the exact same way as an in-app camera/gallery
+  // photo (FileReader works on any Blob, not just File objects from an <input>, so no separate
+  // code path is needed for "came from Drive" vs "came from the device camera").
+  async function downloadPhotoBlob(fileId) {
+    const token = await requestAccessToken();
+    const res = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`Gagal mengunduh foto dari Drive (error ${res.status}).`);
+    return res.blob();
+  }
+  
   async function uploadPhoto(idpel, blob, filenameSuffix = "") {
     const folderId = getFolderId();
     if (!folderId) throw new Error("Folder ID Google Drive belum diatur di Setelan.");
@@ -2407,7 +2435,7 @@ const Mod_google_driveApi = (function(){
     return res.json();
   }
   
-  return {findPhotoForCustomer, uploadPhoto};
+  return {findPhotoForCustomer, downloadPhotoBlob, uploadPhoto};
 })();
 
 const Mod_offlineQueue = (function(){
@@ -3007,6 +3035,8 @@ const Mod_views_customerDetail = (function(){
   const {REJECT_REASON_OPTIONS, UNSAFE_REASON_OPTIONS, DAYA_LEVELS_LIST, MAIN_PIPELINE_ORDER} = Mod_dummyData;
   const {getCurrentUserName} = Mod_auth;
   const {enqueueChange, trySync} = Mod_offlineQueue;
+  const {findPhotoForCustomer, downloadPhotoBlob} = Mod_google_driveApi;
+  const {hasValidAccessToken} = Mod_google_sheetsApi;
   const {toast} = Mod_views_shell;
   
   // Stages where a target power level + cost estimate are captured alongside the status change.
@@ -3108,16 +3138,47 @@ const Mod_views_customerDetail = (function(){
     }
   
     let activeTab = "info";
+    // Guards the Drive auto-check (below) to at most once per detail-sheet open, not once per
+    // renderBody() re-render (renderBody runs again after every status change, photo save, etc).
+    let driveAutoChecked = false;
     const body = backdrop.querySelector("#detailBody");
+  
+    // Shared by the manual "Ambil dari Drive" button and the silent auto-check: looks up a file in
+    // the configured Drive folder whose name contains this IDPEL (see driveApi.js), downloads it,
+    // and saves it through the exact same compress+store path as an in-app camera photo. When
+    // `silent` is true (auto-check path) it never shows an error/"not found" toast, since most
+    // customers simply won't have a photo uploaded yet and that shouldn't look like a failure.
+    async function fetchPhotoFromDrive(silent) {
+      try {
+        const file = await findPhotoForCustomer(idpel);
+        if (!file) {
+          if (!silent) toast(`Tidak ada foto di Drive dengan nama file yang mengandung IDPEL ${idpel}.`, "err");
+          return;
+        }
+        const blob = await downloadPhotoBlob(file.id);
+        const dataUrl = await compressImage(blob);
+        Store.update(KEYS.OPERASIONAL, (all) => {
+          const op = all[idpel] || { riwayat: [], auditLog: [], coordOverride: null };
+          return { ...all, [idpel]: { ...op, photoDataUrl: dataUrl } };
+        }, {});
+        logAudit(idpel, "foto", silent ? "Foto ditemukan otomatis dari Google Drive" : "Ambil foto dari Google Drive");
+        toast("Foto dari Google Drive berhasil diambil.", "ok");
+        renderBody();
+      } catch (e) {
+        if (!silent) toast(e.message || "Gagal mengambil foto dari Drive.", "err");
+      }
+    }
   
     function renderBody() {
       const fresh = getModel(idpel);
+      const driveFolderId = (Store.get(KEYS.SETTINGS, {}).google || {}).folderId;
       body.innerHTML = `
         <div class="photo-box" id="photoBox">
           ${fresh.photoDataUrl ? `<img src="${fresh.photoDataUrl}" />` : `<div class="small-muted" style="text-align:center;">${icon("camera")}<div>Belum ada foto</div></div>`}
         </div>
         <div class="action-row">
           <label class="abtn2" style="cursor:pointer;">${icon("camera")}<span>Foto</span><input type="file" accept="image/*" capture="environment" id="photoInput" class="hidden" /></label>
+          ${driveFolderId ? `<button class="abtn2" type="button" id="drivePhotoBtn">${icon("cloud")}<span>Dari Drive</span></button>` : ""}
           <a class="abtn2" href="tel:${fresh.kontak1 || ""}" ${fresh.kontak1 ? "" : "aria-disabled=\"true\" style=\"opacity:.4;pointer-events:none;\""}>${icon("phone")}<span>Telepon</span></a>
           <a class="abtn2" target="_blank" href="https://wa.me/${(fresh.kontak1 || "").replace(/^0/, "62")}?text=${waMessage(fresh)}" ${fresh.kontak1 ? "" : "aria-disabled=\"true\" style=\"opacity:.4;pointer-events:none;\""}>${icon("whatsapp")}<span>WhatsApp</span></a>
           <a class="abtn2" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${fresh.lat},${fresh.lng}">${icon("navigation")}<span>Maps</span></a>
@@ -3144,6 +3205,27 @@ const Mod_views_customerDetail = (function(){
         toast("Foto tersimpan (terkompresi).", "ok");
         renderBody();
       });
+  
+      const drivePhotoBtn = backdrop.querySelector("#drivePhotoBtn");
+      if (drivePhotoBtn) drivePhotoBtn.addEventListener("click", async () => {
+        const original = drivePhotoBtn.innerHTML;
+        drivePhotoBtn.innerHTML = `${icon("cloud")}<span>Mencari...</span>`;
+        drivePhotoBtn.disabled = true;
+        await fetchPhotoFromDrive(false);
+        // On success renderBody() already replaced this whole node; only restore on failure.
+        if (drivePhotoBtn.isConnected) { drivePhotoBtn.innerHTML = original; drivePhotoBtn.disabled = false; }
+      });
+  
+      // Silent auto-check: if this customer has no local photo yet, a Drive folder is configured,
+      // and we already hold a live Google token from earlier this session (e.g. a prior
+      // Sinkronisasi), quietly look for a matching file so a photo someone else uploaded to Drive
+      // just appears - no tap needed. Deliberately does NOT call requestAccessToken() itself (that
+      // could pop up a Google consent window that's not attached to a user click and gets blocked)
+      // - it only piggybacks on a token that's already there.
+      if (!fresh.photoDataUrl && driveFolderId && !driveAutoChecked && navigator.onLine && hasValidAccessToken()) {
+        driveAutoChecked = true;
+        fetchPhotoFromDrive(true);
+      }
   
       backdrop.querySelectorAll(".tabs button").forEach((btn) => {
         btn.addEventListener("click", () => { activeTab = btn.dataset.tab; renderBody(); });
@@ -3617,23 +3699,22 @@ const Mod_views_mapView = (function(){
           </div>
           <div class="map-sync-row">
             <button class="btn secondary sm" id="mapSyncBtn" ${isGoogleConfigured() ? "" : "disabled"} title="${isGoogleConfigured() ? "Tarik data terbaru dari Google Sheets & langsung perbarui peta ini" : "Atur Client ID & Spreadsheet ID di Setelan dulu"}">
-              ${icon("sync")} Sinkron Data
+              ${icon("sync")} Sinkron
             </button>
+            <button class="btn secondary sm" id="goVisitPlanBtn" title="Pelanggan yang dipilih untuk dikunjungi hari ini">${icon("checklist")} Kunjungan${visitPlanIds.size ? ` · ${visitPlanIds.size}` : ""}</button>
+          </div>
+          <div class="map-sync-meta" id="mapSyncStatus">
             <span class="data-badge ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "real" : ds === "dummy" ? "dummy" : "none"; })()}">
               ${(function(){ const ds = Store.get(KEYS.DATA_SOURCE, null); return ds === "real" ? "● DATA ASLI" : ds === "dummy" ? "● CONTOH/DUMMY" : "Belum ada data"; })()}
             </span>
-          </div>
-          <div class="map-sync-meta" id="mapSyncStatus">${Store.get("lastPull", null) ? `Terakhir sinkron: ${formatDateTime(Store.get("lastPull", null))}` : "Belum pernah sinkron"}</div>
-          <div class="visit-plan-bar">
-            <button class="btn secondary sm" id="goVisitPlanBtn">${icon("checklist")} Kunjungan Hari Ini${visitPlanIds.size ? ` · ${visitPlanIds.size}` : ""}</button>
-            <span class="small-muted">Centang pelanggan di daftar untuk menambahkannya</span>
+            ${Store.get("lastPull", null) ? ` · Sinkron ${formatDateTime(Store.get("lastPull", null))}` : ""}
           </div>
           <div class="chip-row" id="chipRow">
             <button class="chip all ${state.subKategori === "semua" ? "active" : ""}" data-cat="semua">Semua</button>
-            <button class="chip tinggi ${state.subKategori === "Tinggi" ? "active" : ""}" data-cat="Tinggi">Prioritas Tinggi</button>
+            <button class="chip tinggi ${state.subKategori === "Tinggi" ? "active" : ""}" data-cat="Tinggi">Tinggi</button>
             <button class="chip sedang ${state.subKategori === "Sedang" ? "active" : ""}" data-cat="Sedang">Sedang</button>
-            <button class="chip eksternal ${state.eksternalMode ? "active" : ""}" id="chipEksternal">
-              ${icon("warning")} Sudah Tambah Daya${externalUpgradedCount ? ` · ${externalUpgradedCount}` : ""}
+            <button class="chip eksternal ${state.eksternalMode ? "active" : ""}" id="chipEksternal" title="Sudah tambah daya lewat jalur lain (info, bukan target aktif)">
+              ${icon("warning")} Tambah Daya Lain${externalUpgradedCount ? ` · ${externalUpgradedCount}` : ""}
             </button>
           </div>
           <button class="filter-toggle" id="filterToggle">
@@ -3706,7 +3787,7 @@ const Mod_views_mapView = (function(){
       const btn = root.querySelector("#goVisitPlanBtn");
       if (!btn) return;
       const n = getVisitPlanIds().size;
-      btn.innerHTML = `${icon("checklist")} Kunjungan Hari Ini${n ? ` · ${n}` : ""}`;
+      btn.innerHTML = `${icon("checklist")} Kunjungan${n ? ` · ${n}` : ""}`;
     }
   
     function refreshList() {
@@ -4855,8 +4936,9 @@ const Mod_views_settings = (function(){
           </div>
           <div class="row2">
             <div class="field" style="margin:0;"><label>Nama Tab Progres Probing</label><input id="gTabProgres" value="${escapeHtml(settings.google.tabProgres || "Progres Probing")}" /></div>
-            <div class="field" style="margin:0;"><label>Folder ID Google Drive (foto)</label><input id="gFolderId" value="${escapeHtml(settings.google.folderId || "")}" /></div>
+            <div class="field" style="margin:0;"><label>Folder ID Google Drive (foto)</label><input id="gFolderId" value="${escapeHtml(settings.google.folderId || "")}" placeholder="ID dari URL folder Drive Anda" /></div>
           </div>
+          <p class="small-muted">Cara pakai foto dari Drive: buat 1 folder khusus di Drive Anda, buka folder itu lalu salin ID-nya dari URL browser (bagian setelah <code>folders/</code>) ke kolom di atas. Saat upload foto ke folder itu, <b>nama filenya harus mengandung ID Pelanggan (IDPEL)</b> pelanggan tsb, misalnya <code>424510003445.jpg</code> atau <code>424510003445 - rumah.jpg</code>. Setelah itu buka detail pelanggan tsb di aplikasi dan tap tombol "Dari Drive" pada foto untuk mengambilnya.</p>
           <button class="btn" id="saveGoogle">Simpan Integrasi Google</button>
         </div>
   
