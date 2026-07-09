@@ -430,7 +430,19 @@ img { max-width: 100%; }
     z-index: 1120; background: var(--brand-navy); color: #fff; border: none; border-radius: 999px;
     padding: 10px 20px; font-size: 13px; font-weight: 700; box-shadow: var(--shadow-md); gap: 6px; align-items: center;
   }
-  .map-layout.show-map .mobile-view-toggle { bottom: 12px; }
+  /* When showing the map (not the list), this pill used to drop to bottom:12px, centered - but
+     that's the exact same spot as .map-mode-toggle (the "Peta 2D" / "Satelit" pill, also centered
+     at bottom:12px), so the two floating pills landed directly on top of each other and the mode
+     toggle underneath became unreachable (Eva's report: "tombol pilihan peta 2d/satelit ketutup").
+     A bottom-right placement was tried first, but on a narrow phone (~360px) the centered 2-button
+     mode-toggle is wide enough to still collide with a right-aligned pill - there isn't enough
+     horizontal room to separate them side by side. Stacking vertically instead: bottom:116px clears
+     both .map-mode-toggle (bottom:12px, ~30px tall -> top edge ~42px from the bottom) and, when
+     offline, .offline-map-note (bottom:56px, up to ~44px tall when its text wraps to 2 lines on a
+     narrow screen -> top edge ~100px from the bottom) - measured directly via Playwright on a
+     360x740 viewport, with margin to spare above the taller (offline) case.
+  */
+  .map-layout.show-map .mobile-view-toggle { bottom: 116px; }
 }
 
 table.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -5221,6 +5233,26 @@ const Mod_views_settings = (function(){
   Store.subscribe("__quota_error__", ({ key }) => {
     toast(`Gagal menyimpan data "${key}" ke penyimpanan perangkat - kemungkinan penyimpanan penuh. Coba hapus data lain atau pakai perangkat/browser lain.`, "err");
   });
+  
+  // Detail/KPI modals (customerDetail.js, dashboard.js) are a narrow centered ".modal-sheet" column
+  // over a full-screen dark ".modal-backdrop" (see styles.css - this bottom-sheet layout is shared
+  // by phone and desktop alike). On a phone the sheet is full-width so this is moot, but on a wide
+  // laptop screen the sheet only covers a slim strip in the middle - the rest of the screen is dark
+  // "dead zone" backdrop that does nothing when scrolled. Eva's report ("di laptop tidak bisa
+  // scroll down saat buka detail pelanggan"): the mouse just has to be resting outside that narrow
+  // column - very easy on a wide screen - and scrolling silently does nothing, reading as "the
+  // detail box can't scroll at all" even though it actually can once the mouse is precisely over it.
+  // Forward wheel scrolling from anywhere on the backdrop to the sheet so this dead zone can't trap
+  // scroll input regardless of exactly where the cursor happens to be. One delegated listener here
+  // covers every current and future modal-backdrop/modal-sheet pair without touching each view file.
+  document.addEventListener("wheel", (e) => {
+    const backdrop = e.target.closest(".modal-backdrop");
+    if (!backdrop) return;
+    const sheet = backdrop.querySelector(".modal-sheet");
+    if (!sheet || sheet.contains(e.target)) return; // over the sheet itself - its own overflow:auto already handles this natively
+    sheet.scrollTop += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
   
   // Store.hydrate() loads IDENTITAS/PEMAKAIAN from IndexedDB into memory before anything else runs -
   // see store.js for why (localStorage's ~5-10MB quota isn't enough for a real, full-ULP usage
