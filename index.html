@@ -57,7 +57,7 @@ button .ico, a .ico { width: 16px; height: 16px; }
 .auth-logo .ico svg, .brand-logo .ico svg { width: 100%; height: 100%; }
 .auth-logo .ico { width: 56px; height: 56px; }
 .appbar .brand-logo .ico { width: 28px; height: 28px; }
-.auth-logo img, .brand-logo img { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 4px; }
+.auth-logo img, .brand-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .abtn2 .ico { width: 18px; height: 18px; }
 .map-toolbar .ico { width: 16px; height: 16px; }
 
@@ -98,11 +98,14 @@ img { max-width: 100%; }
 }
 .appbar .brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .appbar .brand-logo {
-  width: 34px; height: 34px; border-radius: 8px;
-  background: #fff;
+  /* No white "plate" behind the badge anymore - the logo image already IS a complete badge (its
+     own background baked in). A separate white/shadowed plate underneath it used to peek out at
+     the corners, which looked like a second, ghost logo sitting behind the real one. No
+     border-radius here either (per Eva - this is the official PLN logo shape, square, not
+     rounded) - just the plain image directly on the navy appbar. */
+  width: 34px; height: 34px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
-  padding: 3px; box-sizing: border-box;
 }
 .appbar .brand-logo svg { width: 100%; height: 100%; }
 .appbar .brand-text { min-width: 0; }
@@ -164,7 +167,12 @@ img { max-width: 100%; }
 .auth-inner { margin: auto 0; display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%; }
 .auth-logo { width: 76px; height: 76px; border-radius: 20px; background: var(--brand-yellow); display:flex; align-items:center; justify-content:center; flex-shrink: 0; }
 .auth-logo svg { width: 44px; height: 44px; }
-.auth-logo.logo-plate { background: #fff; box-shadow: var(--shadow-md); }
+/* Same fix as .appbar .brand-logo above - the PLN logo image is already a complete badge on its
+   own, so a separate white plate + shadow behind it showed through as a faint "second logo"
+   ghosting behind the real one. Drop the plate. Also override the base .auth-logo rounding to 0
+   here specifically (NOT for .auth-logo generally - the lock-screen icon above still uses that
+   rounded yellow badge style) - per Eva, the official PLN logo shape is square, not rounded. */
+.auth-logo.logo-plate { background: transparent; box-shadow: none; border-radius: 0; }
 .auth-card {
   background: var(--surface); color: var(--text); border-radius: var(--radius);
   padding: 20px; width: 100%; max-width: 340px; box-shadow: var(--shadow-md);
@@ -337,6 +345,10 @@ img { max-width: 100%; }
 .visit-plan-list .customer-row { cursor: pointer; }
 .visit-plan-list .customer-row .cmeta:last-child { margin-top: 3px; color: var(--brand-navy); font-weight: 600; }
 [data-theme="dark"] .visit-plan-list .customer-row .cmeta:last-child { color: var(--brand-yellow); }
+/* "Adjustment Daya" (views/dayaAdjustment.js) - same reused .customer-row/.cname/.cmeta pattern;
+   last line is the "naik ke X VA" recommendation, emphasized same as the visit-plan list above. */
+.adj-list .customer-row .cmeta:last-child { margin-top: 3px; color: var(--brand-navy); font-weight: 700; }
+[data-theme="dark"] .adj-list .customer-row .cmeta:last-child { color: var(--brand-yellow); }
 .visit-plan-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .visit-plan-actions a.btn { text-decoration: none; }
 .rot180 { display: inline-flex; transform: rotate(180deg); }
@@ -480,6 +492,18 @@ table.data-table th { color: var(--text-muted); font-weight: 600; font-size: 11.
 .reason-grid { display: grid; gap: 6px; margin: 8px 0; }
 .reason-opt { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; }
 .reason-opt input { margin: 0; }
+
+/* Galeri "Bukti Pekerjaan" - lihat renderFotoTab() di customerDetail.js */
+.bukti-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.bukti-item { position: relative; border-radius: var(--radius-sm); overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); aspect-ratio: 1 / 1; }
+.bukti-item img { width: 100%; height: 100%; object-fit: cover; cursor: pointer; display: block; }
+.bukti-remove { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: #fff; display: flex; align-items: center; justify-content: center; padding: 0; }
+.bukti-remove .ico { width: 12px; height: 12px; }
+.bukti-meta { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(to top, rgba(0,0,0,0.65), transparent); color: #fff; font-size: 9.5px; line-height: 1.3; padding: 12px 6px 5px; pointer-events: none; }
+
+.lightbox-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.lightbox-backdrop img { max-width: 100%; max-height: 100%; border-radius: 6px; object-fit: contain; }
+.lightbox-close { position: absolute; top: 16px; right: 16px; width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(255,255,255,0.15); color: #fff; display: flex; align-items: center; justify-content: center; }
 
 .toast-wrap { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 2000; display: flex; flex-direction: column; gap: 6px; align-items: center; }
 .toast { background: var(--brand-navy); color: #fff; padding: 9px 16px; border-radius: 999px; font-size: 12.5px; box-shadow: var(--shadow-md); }
@@ -1461,6 +1485,10 @@ const Mod_scoring = (function(){
   
       results.push({
         idpel,
+        // NOPEL (nomor pelanggan/meter) - optional column, same pattern as kogol below: only used
+        // by the "Adjustment Daya" analysis (dayaAdjustment.js) for now, blank/harmless everywhere
+        // else if the sheet doesn't have this column.
+        nopel: ident.NOPEL || lastRow.NOPEL || "",
         nama: ident.NAMA || lastRow.NAMA,
         alamat: ident.ALAMAT || lastRow.ALAMAT,
         lat: op.coordOverride?.lat ?? lat,
@@ -1498,6 +1526,10 @@ const Mod_scoring = (function(){
         riwayatProbing: op.riwayat || [],
         auditLog: op.auditLog || [],
         photoDataUrl: op.photoDataUrl || null,
+        // Foto bukti pekerjaan - galeri bebas terpisah dari photoDataUrl (foto bangunan/rumah,
+        // satu foto saja). Bisa lebih dari satu, ditambah kapan saja tanpa terikat ke satu
+        // tahap/status tertentu (lihat renderFotoTab() di customerDetail.js).
+        buktiPekerjaan: op.buktiPekerjaan || [],
         kddk: ident.KDDK || "",
         dataStabil: sinceChange.length >= 3,
       });
@@ -2170,7 +2202,16 @@ const Mod_google_sheetsApi = (function(){
   
   const GIS_SRC = "https://accounts.google.com/gsi/client";
   const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
-  const SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file";
+  // IMPORTANT re: drive.file vs drive.readonly - drive.file ONLY grants access to files the app
+  // itself created or that the user explicitly selected via a Google Picker; it does NOT let
+  // files.list() see arbitrary files someone uploaded straight into a Drive folder through Drive's
+  // own app/website, even if this app already knows that folder's ID (PRD 5.7 - "Ambil dari Drive").
+  // That mismatch was the actual cause of photos never showing up automatically: findPhotoForCustomer()
+  // in driveApi.js would just come back with zero results, silently, for anything not uploaded
+  // through this app. drive.readonly grants read (list + download) access across the whole Drive,
+  // which is what's actually needed here; drive.file is kept alongside it so the app's own
+  // uploadPhoto() can still create files if that gets wired up later.
+  const SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file";
   
   let gisLoadPromise = null;
   let tokenClient = null;
@@ -2830,12 +2871,12 @@ const Mod_views_shell = (function(){
     });
   
     root.querySelector("#userBtn").addEventListener("click", () => {
-      if (confirm("Kunci sesi ini sekarang?")) {
-        import("../auth.js").then(({ lockSession }) => {
-          lockSession();
-          navigate("map");
-          window.dispatchEvent(new CustomEvent("gtd:lock"));
-        });
+      if (confirm("Logout dari aplikasi ini?")) {
+        logout();
+        navigate("map");
+        // Reuses main.js's existing "gtd:lock" -> boot() wiring to re-render: with the session now
+        // cleared, boot() finds no session and shows the login screen, same as any other reboot.
+        window.dispatchEvent(new CustomEvent("gtd:lock"));
       }
     });
   
@@ -3187,6 +3228,7 @@ const Mod_views_customerDetail = (function(){
   
         <div class="tabs">
           <button data-tab="info" class="${activeTab === "info" ? "active" : ""}">Info</button>
+          <button data-tab="foto" class="${activeTab === "foto" ? "active" : ""}">Foto${fresh.buktiPekerjaan.length ? ` (${fresh.buktiPekerjaan.length})` : ""}</button>
           <button data-tab="pemakaian" class="${activeTab === "pemakaian" ? "active" : ""}">Pemakaian</button>
           <button data-tab="riwayat" class="${activeTab === "riwayat" ? "active" : ""}">Riwayat</button>
         </div>
@@ -3233,8 +3275,74 @@ const Mod_views_customerDetail = (function(){
   
       const tabContent = backdrop.querySelector("#tabContent");
       if (activeTab === "info") renderInfoTab(tabContent, fresh);
+      if (activeTab === "foto") renderFotoTab(tabContent, fresh);
       if (activeTab === "pemakaian") renderPemakaianTab(tabContent, fresh);
       if (activeTab === "riwayat") renderRiwayatTab(tabContent, fresh);
+    }
+  
+    // Galeri "Bukti Pekerjaan" - terpisah dari foto bangunan (photoDataUrl) di atas. Bisa lebih
+    // dari satu foto, ditambah kapan saja (tidak terikat ke satu tahap status tertentu), tiap foto
+    // otomatis tercatat waktu & nama petugas yang upload, dan bisa dihapus kalau salah upload.
+    function renderFotoTab(container, fresh) {
+      const items = fresh.buktiPekerjaan.slice().reverse();
+      container.innerHTML = `
+        <div class="card-title">Bukti Pekerjaan</div>
+        <p class="small-muted" style="margin-bottom:10px;">Foto bukti kunjungan/pekerjaan di lapangan - bisa lebih dari satu, tidak terikat ke tahap status tertentu.</p>
+        <label class="btn secondary sm" style="cursor:pointer; display:inline-flex; width:auto;">${icon("camera")}<span>Tambah Foto</span><input type="file" accept="image/*" capture="environment" id="buktiPhotoInput" class="hidden" /></label>
+        ${items.length ? `
+          <div class="bukti-grid" style="margin-top:12px;">
+            ${items.map((b) => `
+              <div class="bukti-item" data-id="${b.id}">
+                <img src="${b.dataUrl}" data-lightbox="${b.id}" />
+                <button class="bukti-remove" data-remove="${b.id}" title="Hapus foto ini">${icon("close")}</button>
+                <div class="bukti-meta">${formatDateTime(b.waktu)}<br/>${escapeHtml(b.petugas || "-")}</div>
+              </div>
+            `).join("")}
+          </div>
+        ` : `<div class="small-muted" style="margin-top:12px;">Belum ada foto bukti pekerjaan.</div>`}
+      `;
+  
+      container.querySelector("#buktiPhotoInput").addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const dataUrl = await compressImage(file);
+        const entry = { id: uid(), dataUrl, waktu: new Date().toISOString(), petugas: getCurrentUserName() || fresh.petugas };
+        Store.update(KEYS.OPERASIONAL, (all) => {
+          const op = all[idpel] || { riwayat: [], auditLog: [], coordOverride: null, buktiPekerjaan: [] };
+          return { ...all, [idpel]: { ...op, buktiPekerjaan: [...(op.buktiPekerjaan || []), entry] } };
+        }, {});
+        logAudit(idpel, "buktiPekerjaan", "Tambah foto bukti pekerjaan");
+        toast("Foto bukti pekerjaan ditambahkan.", "ok");
+        renderBody();
+      });
+  
+      container.querySelectorAll("[data-remove]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          if (!confirm("Hapus foto bukti pekerjaan ini?")) return;
+          const id = btn.dataset.remove;
+          Store.update(KEYS.OPERASIONAL, (all) => {
+            const op = all[idpel] || { riwayat: [], auditLog: [], coordOverride: null, buktiPekerjaan: [] };
+            return { ...all, [idpel]: { ...op, buktiPekerjaan: (op.buktiPekerjaan || []).filter((b) => b.id !== id) } };
+          }, {});
+          logAudit(idpel, "buktiPekerjaan", "Hapus foto bukti pekerjaan");
+          toast("Foto dihapus.", "ok");
+          renderBody();
+        });
+      });
+  
+      container.querySelectorAll("img[data-lightbox]").forEach((img) => {
+        img.addEventListener("click", () => openLightbox(img.src));
+      });
+    }
+  
+    // Simple full-screen preview so a petugas can check a thumbnail's detail before deciding to
+    // keep/delete it - avoids opening data: URLs in a new tab, which is unreliable inside a PWA.
+    function openLightbox(src) {
+      const lb = document.createElement("div");
+      lb.className = "lightbox-backdrop";
+      lb.innerHTML = `<img src="${src}" /><button class="lightbox-close">${icon("close")}</button>`;
+      lb.addEventListener("click", () => lb.remove());
+      document.body.appendChild(lb);
     }
   
     function renderInfoTab(container, fresh) {
@@ -4377,6 +4485,16 @@ const Mod_views_dashboard = (function(){
   function renderDashboard(root) {
     const { models, externallyUpgraded, settings, operasional } = getAllData();
     const routes = [...new Set(models.map((m) => m.rute).filter(Boolean))].sort();
+    // Same fix as mapView.js's petugas filter: PETUGAS_SEED is a hardcoded list of DUMMY names
+    // ("Rudi Hartono", "Sitti Rahma", ...) from dummyData.js, unrelated to whoever's actually in
+    // the loaded Google Sheets data. Using it directly here meant the Dashboard's Petugas filter
+    // (and the "Peringkat Petugas" table below) only ever offered/matched those sample names, so
+    // real petugas could never be selected and the ranking table came back empty once real data
+    // was loaded. Build the options from the real, currently-loaded customer models instead, same
+    // as routes above - dummy names stay as a fallback only while dummy data is genuinely still
+    // active (nothing pulled yet), so this isn't empty on a brand-new install.
+    const petugasOptions = [...new Set(models.map((m) => m.petugas).filter(Boolean))].sort();
+    const petugasFilterOptions = petugasOptions.length ? petugasOptions : PETUGAS_SEED;
     const filtered = applyDashFilters(models);
     const externallyUpgradedFiltered = applyDashFilters(externallyUpgraded);
   
@@ -4455,7 +4573,7 @@ const Mod_views_dashboard = (function(){
     const topRute = Object.entries(ruteKVA).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([label, value]) => ({ label, value: Math.round(value * 10) / 10, display: `${Math.round(value * 10) / 10} kVA` }));
   
     // performa per petugas
-    const petugasStats = PETUGAS_SEED.map((p) => {
+    const petugasStats = petugasFilterOptions.map((p) => {
       const own = filtered.filter((m) => m.petugas === p);
       const kunjungan = own.reduce((s, m) => s + m.riwayatProbing.filter((r) => r.tahap === "Sudah Dikunjungi").length, 0);
       const closed = own.filter((m) => ["Tersambung", "Ditolak"].includes(m.statusProbing));
@@ -4489,8 +4607,8 @@ const Mod_views_dashboard = (function(){
     root.innerHTML = `
       <div class="view-pad">
         <div class="toolbar-row">
-          <select id="fRute"><option value="">Semua Rute/Rayon</option>${routes.map((r) => `<option ${state.rute === r ? "selected" : ""}>${r}</option>`).join("")}</select>
-          <select id="fPetugas"><option value="">Semua Petugas</option>${PETUGAS_SEED.map((p) => `<option ${state.petugas === p ? "selected" : ""}>${p}</option>`).join("")}</select>
+          <select id="fRute"><option value="">Semua Rute</option>${routes.map((r) => `<option ${state.rute === r ? "selected" : ""}>${r}</option>`).join("")}</select>
+          <select id="fPetugas"><option value="">Semua Petugas</option>${petugasFilterOptions.map((p) => `<option ${state.petugas === p ? "selected" : ""}>${p}</option>`).join("")}</select>
           <select id="fPeriod">
             <option value="3" ${state.periodMonths === 3 ? "selected" : ""}>3 Bulan Terakhir</option>
             <option value="6" ${state.periodMonths === 6 ? "selected" : ""}>6 Bulan Terakhir</option>
@@ -4840,11 +4958,10 @@ const Mod_views_importData = (function(){
 const Mod_views_settings = (function(){
   const {icon} = Mod_icons;
   const {Store, KEYS} = Mod_store;
-  const {DEFAULT_SETTINGS} = Mod_scoring;
+  const {DEFAULT_SETTINGS, buildCustomerModels} = Mod_scoring;
   const {DEFAULT_COST_TABLE, COST_TABLE_LAST_UPDATED_DEFAULT} = Mod_costTable;
   const {getAccounts, createAccount, resetPin, setAccountActive, getSession} = Mod_auth;
   const {formatDate, formatRupiah, escapeHtml} = Mod_format;
-  const {REGIONS, PETUGAS_SEED} = Mod_dummyData;
   const {toast} = Mod_views_shell;
   
   function getSettings() {
@@ -4854,19 +4971,46 @@ const Mod_views_settings = (function(){
     Store.set(KEYS.SETTINGS, { ...getSettings(), ...patch });
   }
   
+  // The "Wilayah & Petugas" card used to just print REGIONS/PETUGAS_SEED - a hardcoded SAMPLE list
+  // from dummyData.js (Nabire, Nabire Barat, Yaro, ... / Rudi Hartono, Sitti Rahma, ...) that has
+  // never been connected to whatever's actually in the synced Google Sheets data. Eva pointed out
+  // it doesn't match her real data - which is correct, it never did. Build it from the real,
+  // currently-loaded customer models instead (same source the Peta/Dashboard route & petugas
+  // filters already use), so this card always reflects what's actually in her data right now.
+  function getWilayahPetugasSummary() {
+    const identitas = Store.get(KEYS.IDENTITAS, []);
+    const pemakaian = Store.get(KEYS.PEMAKAIAN, []);
+    const progres = Store.get(KEYS.PROGRES, {});
+    const operasional = Store.get(KEYS.OPERASIONAL, {});
+    const settings = Store.get(KEYS.SETTINGS, {});
+    const dayaUpdate = Store.get(KEYS.DAYA_UPDATE, []);
+    const models = buildCustomerModels({ identitas, pemakaian, progres, operasional, settings, dayaUpdate });
+    const ruteCounts = {};
+    const petugasSet = new Set();
+    models.forEach((m) => {
+      if (m.rute) ruteCounts[m.rute] = (ruteCounts[m.rute] || 0) + 1;
+      if (m.petugas) petugasSet.add(m.petugas);
+    });
+    const rutes = Object.entries(ruteCounts).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+    return { rutes, petugasList: [...petugasSet].sort() };
+  }
+  
   function renderSettings(root) {
     const settings = getSettings();
     const accounts = getAccounts();
     const session = getSession();
     const isAdmin = session?.role === "Admin";
+    const wp = getWilayahPetugasSummary();
   
     root.innerHTML = `
       <div class="view-pad stack-12">
         <div class="card">
           <div class="card-title">Wilayah &amp; Petugas</div>
-          <p class="small-muted">Kecamatan/rayon yang dipakai untuk filter peta &amp; dashboard.</p>
-          <ul class="list-plain">${REGIONS.map((r) => `<li><span>${r.name}</span><span class="small-muted">${r.code}</span></li>`).join("")}</ul>
-          <p class="small-muted" style="margin-top:10px;">Petugas terdaftar: ${PETUGAS_SEED.join(", ")}</p>
+          <p class="small-muted">Rute/rayon &amp; petugas yang terdeteksi otomatis dari data pelanggan yang sudah disinkron - dipakai untuk filter Peta &amp; Dashboard.</p>
+          ${wp.rutes.length
+            ? `<ul class="list-plain">${wp.rutes.map((r) => `<li><span>${escapeHtml(r.name)}</span><span class="small-muted">${r.count} pelanggan</span></li>`).join("")}</ul>`
+            : `<p class="small-muted">Belum ada data rute - sinkron data pelanggan dulu di menu Sinkronisasi.</p>`}
+          <p class="small-muted" style="margin-top:10px;">Petugas terdeteksi: ${wp.petugasList.length ? escapeHtml(wp.petugasList.join(", ")) : "belum ada data."}</p>
         </div>
   
         <div class="card">
