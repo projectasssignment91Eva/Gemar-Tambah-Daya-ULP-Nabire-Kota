@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <title>Gemar Tambah Daya - PLN ULP Nabire Kota</title>
 <meta name="description" content="Geomapping Marketing Tambah Daya ULP Nabire Kota - PT PLN (Persero)" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+<link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png" />
+<link rel="apple-touch-icon" href="./icons/icon-192.png" />
+<meta name="theme-color" content="#0A2E52" />
 <style>
 /* ===== Gemar Tambah Daya - Design Tokens ===== */
 :root {
@@ -3172,7 +3177,7 @@ const Mod_views_customerDetail = (function(){
           ${fresh.photoDataUrl ? `<img src="${fresh.photoDataUrl}" />` : `<div class="small-muted" style="text-align:center;">${icon("camera")}<div>Belum ada foto</div></div>`}
         </div>
         <div class="action-row">
-          <label class="abtn2" style="cursor:pointer;">${icon("camera")}<span>Foto</span><input type="file" accept="image/*" capture="environment" id="photoInput" class="hidden" /></label>
+          <label class="abtn2" style="cursor:pointer;">${icon("camera")}<span>Foto</span><input type="file" accept="image/*" id="photoInput" class="hidden" /></label>
           ${driveFolderId ? `<button class="abtn2" type="button" id="drivePhotoBtn">${icon("cloud")}<span>Dari Drive</span></button>` : ""}
           <a class="abtn2" href="tel:${fresh.kontak1 || ""}" ${fresh.kontak1 ? "" : "aria-disabled=\"true\" style=\"opacity:.4;pointer-events:none;\""}>${icon("phone")}<span>Telepon</span></a>
           <a class="abtn2" target="_blank" href="https://wa.me/${(fresh.kontak1 || "").replace(/^0/, "62")}?text=${waMessage(fresh)}" ${fresh.kontak1 ? "" : "aria-disabled=\"true\" style=\"opacity:.4;pointer-events:none;\""}>${icon("whatsapp")}<span>WhatsApp</span></a>
@@ -3242,7 +3247,7 @@ const Mod_views_customerDetail = (function(){
       container.innerHTML = `
         <div class="card-title">Bukti Pekerjaan</div>
         <p class="small-muted" style="margin-bottom:10px;">Foto bukti kunjungan/pekerjaan di lapangan - bisa lebih dari satu, tidak terikat ke tahap status tertentu.</p>
-        <label class="btn secondary sm" style="cursor:pointer; display:inline-flex; width:auto;">${icon("camera")}<span>Tambah Foto</span><input type="file" accept="image/*" capture="environment" id="buktiPhotoInput" class="hidden" /></label>
+        <label class="btn secondary sm" style="cursor:pointer; display:inline-flex; width:auto;">${icon("camera")}<span>Tambah Foto</span><input type="file" accept="image/*" id="buktiPhotoInput" class="hidden" /></label>
         ${items.length ? `
           <div class="bukti-grid" style="margin-top:12px;">
             ${items.map((b) => `
