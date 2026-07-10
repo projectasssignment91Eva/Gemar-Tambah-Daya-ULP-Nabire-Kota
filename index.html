@@ -2645,6 +2645,22 @@ const Mod_auth = (function(){
     Store.set(KEYS.ACCOUNTS, accounts);
   }
   
+  function renameAccount(accountId, newNama) {
+    const accounts = getAccounts();
+    const idx = accounts.findIndex((a) => a.id === accountId);
+    if (idx < 0) throw new Error("Akun tidak ditemukan.");
+    accounts[idx] = { ...accounts[idx], nama: newNama };
+    Store.set(KEYS.ACCOUNTS, accounts);
+    // getCurrentUserName()/the header name badge (shell.js) read session.nama, a copy cached at
+    // login time (see login() below) - NOT the live accounts list. Without this, renaming your own
+    // currently-logged-in account would only show the new name after a logout/login round trip.
+    // Keep the active session in sync immediately when it's the same account being renamed.
+    const session = getSession();
+    if (session && session.accountId === accountId) {
+      Store.set(KEYS.SESSION, { ...session, nama: newNama });
+    }
+  }
+  
   function setAccountActive(accountId, aktif) {
     const accounts = getAccounts();
     const idx = accounts.findIndex((a) => a.id === accountId);
@@ -2714,7 +2730,7 @@ const Mod_auth = (function(){
     setInterval(check, 15000);
   }
   
-  return {getAccounts, seedDefaultAccounts, createAccount, resetPin, setAccountActive, login, getSession, getCurrentUserName, logout, lockSession, unlockSession, touchActivity, initInactivityWatcher};
+  return {getAccounts, seedDefaultAccounts, createAccount, resetPin, renameAccount, setAccountActive, login, getSession, getCurrentUserName, logout, lockSession, unlockSession, touchActivity, initInactivityWatcher};
 })();
 
 const Mod_router = (function(){
@@ -4843,9 +4859,9 @@ const Mod_views_settings = (function(){
   const {Store, KEYS} = Mod_store;
   const {DEFAULT_SETTINGS, buildCustomerModels} = Mod_scoring;
   const {DEFAULT_COST_TABLE, COST_TABLE_LAST_UPDATED_DEFAULT} = Mod_costTable;
-  const {getAccounts, createAccount, resetPin, setAccountActive, getSession} = Mod_auth;
+  const {getAccounts, createAccount, resetPin, renameAccount, setAccountActive, getSession} = Mod_auth;
   const {formatDate, formatRupiah, escapeHtml} = Mod_format;
-  const {toast} = Mod_views_shell;
+  const {toast, refreshShellHeader} = Mod_views_shell;
   
   function getSettings() {
     return { ...DEFAULT_SETTINGS, costTable: DEFAULT_COST_TABLE, costTableUpdated: COST_TABLE_LAST_UPDATED_DEFAULT, google: {}, ...Store.get(KEYS.SETTINGS, {}) };
@@ -4988,7 +5004,7 @@ const Mod_views_settings = (function(){
               <div class="au">@${escapeHtml(a.username)} ${a.aktif ? "" : "· nonaktif"}</div>
             </div>
             <div class="flags">
-              ${isAdmin ? `<button class="link-btn resetPinBtn">reset PIN</button><button class="link-btn toggleActiveBtn">${a.aktif ? "nonaktifkan" : "aktifkan"}</button>` : ""}
+              ${isAdmin ? `<button class="link-btn renameBtn">ubah nama</button><button class="link-btn resetPinBtn">reset PIN</button><button class="link-btn toggleActiveBtn">${a.aktif ? "nonaktifkan" : "aktifkan"}</button>` : ""}
             </div>
           </div>
         `).join("")}
@@ -4996,6 +5012,19 @@ const Mod_views_settings = (function(){
       if (!isAdmin) return;
       root.querySelectorAll(".acc-row").forEach((rowEl) => {
         const id = rowEl.dataset.id;
+        rowEl.querySelector(".renameBtn")?.addEventListener("click", () => {
+          const acc = accounts.find((a) => a.id === id);
+          const newNama = prompt("Nama baru:", acc?.nama || "");
+          if (newNama == null) return; // cancelled
+          const trimmed = newNama.trim();
+          if (!trimmed) { toast("Nama tidak boleh kosong.", "err"); return; }
+          try {
+            renameAccount(id, trimmed);
+            toast("Nama akun diperbarui.", "ok");
+            refreshShellHeader(); // in case the renamed account is the one currently logged in
+            renderSettings(root);
+          } catch (e) { toast(e.message, "err"); }
+        });
         rowEl.querySelector(".resetPinBtn")?.addEventListener("click", async () => {
           const pin = prompt("PIN baru (4-6 digit):");
           if (!pin || !/^\d{4,6}$/.test(pin)) { toast("PIN tidak valid.", "err"); return; }
