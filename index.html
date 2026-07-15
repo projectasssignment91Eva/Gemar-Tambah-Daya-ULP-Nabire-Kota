@@ -659,8 +659,56 @@ const Mod_format = (function(){
       .replace(/'/g, "&#39;");
   }
   
+  // Judul Kata (Title Case) sederhana - nama & alamat pelanggan biasanya tersimpan HURUF BESAR
+  // SEMUA di sheet sumber data ("JHON SEMBOR"), yang terasa "berteriak"/kurang sopan kalau langsung
+  // dipakai apa adanya di pesan WhatsApp ke pelanggan. Dipakai untuk mempercantik tampilan nama
+  // (mis. "Jhon Sembor") di pesan sapaan WhatsApp - lihat waMessage() di views/customerDetail.js.
+  function toTitleCase(str) {
+    if (!str) return "";
+    return String(str)
+      .toLowerCase()
+      .replace(/(^|\s|[/-])([a-z])/g, (m, sep, letter) => sep + letter.toUpperCase());
+  }
+  
+  // Sama seperti toTitleCase, tapi khusus alamat: singkatan umum jalan yang biasa ditulis huruf
+  // besar di sheet ("JL", "GG", dst) dijabarkan penuh supaya lebih sopan dibaca pelanggan lewat
+  // pesan WhatsApp (mis. "JL BELAKANG HOTEL MAJU NABIRE" -> "Jalan Belakang Hotel Maju Nabire").
+  const ADDRESS_ABBR = { jl: "Jalan", jln: "Jalan", gg: "Gang", komp: "Komplek", perum: "Perumahan" };
+  function toAddressCase(str) {
+    if (!str) return "";
+    return toTitleCase(str)
+      .split(" ")
+      .map((word) => ADDRESS_ABBR[word.toLowerCase()] || word)
+      .join(" ");
+  }
+  
   function uid(prefix = "id") {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  
+  // Kompres gambar sebelum disimpan (foto pelanggan, brosur promo, dsb) - dipindah ke sini dari
+  // views/customerDetail.js supaya bisa dipakai bersama oleh fitur lain yang juga menyimpan gambar
+  // sebagai data URL di local storage (mis. brosur promo di views/settings.js), tanpa duplikat kode.
+  function compressImage(file, maxDim = 900, quality = 0.72) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > height && width > maxDim) { height = Math.round((height * maxDim) / width); width = maxDim; }
+          else if (height > maxDim) { width = Math.round((width * maxDim) / height); height = maxDim; }
+          const canvas = document.createElement("canvas");
+          canvas.width = width; canvas.height = height;
+          canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
   
   // Maps a StatusProbing value to its .status-pill modifier class (see styles.css). Shared between
@@ -674,7 +722,7 @@ const Mod_format = (function(){
     return map[status] || "";
   }
   
-  return {formatRupiah, formatNumber, formatVA, formatDate, formatDateTime, monthLabel, daysAgo, escapeHtml, uid, statusClass};
+  return {formatRupiah, formatNumber, formatVA, formatDate, formatDateTime, monthLabel, daysAgo, escapeHtml, toTitleCase, toAddressCase, uid, compressImage, statusClass};
 })();
 
 const Mod_hash = (function(){
@@ -1380,7 +1428,17 @@ const Mod_dummyData = (function(){
 const Mod_scoring = (function(){
   // Model & Algoritma Prioritas - PRD section 6.
   // Merges "Data Identitas" + "Data Pemakaian" (keyed by IDPEL) and computes:
-  //  - kriteria utama (JN rata-rata > ambang, dihitung HANYA sejak perubahan DAYA terakhir)
+  //  - kriteria utama: pelanggan jadi target begitu SUDAH ADA >= MIN_BULAN_DI_ATAS_AMBANG bulan
+  //    (sejak perubahan DAYA terakhir) yang JN-nya melewati ambang - bukan rata-rata seluruh
+  //    riwayat. Ini supaya pelanggan yang pemakaiannya baru naik (tren naik dari bulan-bulan
+  //    rendah sebelumnya) tidak "tertahan" jadi bukan-target hanya karena bulan-bulan lama yang
+  //    masih rendah menarik turun rata-rata keseluruhan. Diputuskan bersama Eva (2026-07): minimal
+  //    2 bulan (tidak harus berurutan) supaya tidak mudah salah tangkap gara-gara 1 bulan anomali
+  //    (meteran salah catat, dsb), tapi tetap cukup responsif menangkap tren terbaru.
+  //  - rata-rata JN yang ditampilkan/dipakai untuk skor & sub-kategori dihitung HANYA dari
+  //    bulan-bulan yang sudah melewati ambang tsb (bukan dirata-ratakan dengan bulan-bulan rendah
+  //    di bawahnya) - begitu pelanggan lolos kriteria utama, tren naik terbarunya langsung
+  //    tercermin di skor, tidak diredam oleh histori lama.
   //  - sub-kategori Tinggi/Sedang
   //  - skor prioritas (70% posisi JN vs ambang, 30% tren kenaikan pemakaian, bobot dapat diatur)
   //  - deteksi pelanggan yang kemungkinan sudah tambah daya lewat jalur lain (panel konsistensi data)
@@ -1391,7 +1449,26 @@ const Mod_scoring = (function(){
     bobotTren: 0.3,        // sisanya (0.7) untuk posisi JN vs ambang
     targetBulanan: 20,     // pelanggan Tersambung / bulan
     slaHari: 30,           // aging threshold
+    // Promo broadcast (permintaan Eva, 2026-07): dipakai oleh tombol "Kirim Promo" di Peta & kartu
+    // KPI promo di Dashboard. Berupa DAFTAR (bukan satu objek) karena promo akan berulang dengan
+    // periode-periode berbeda dari waktu ke waktu (bukan cuma satu kali) - setiap periode disimpan
+    // sebagai entri terpisah di sini (dikelola di Pengaturan) supaya riwayat performa tiap periode
+    // promo tetap bisa dilihat di Dashboard, bukan cuma periode yang terbaru/aktif saja.
+    promoList: [
+      {
+        id: "promo_default",
+        judul: "Promo Tambah Daya",
+        pesan: "Halo Bapak/Ibu, PLN ULP Nabire Kota sedang mengadakan Promo Tambah Daya periode 14-27 Juli 2026! Nikmati kemudahan menambah daya listrik rumah Anda. Hubungi petugas kami untuk info lebih lanjut.",
+        mulai: "2026-07-14",
+        selesai: "2026-07-27",
+        brosurDataUrl: null,
+      },
+    ],
   };
+  
+  // Jumlah bulan minimal (sejak perubahan daya terakhir, tidak harus berurutan) yang JN-nya harus
+  // sudah melewati ambangUtama sebelum pelanggan resmi dianggap lolos kriteria utama/target.
+  const MIN_BULAN_DI_ATAS_AMBANG = 2;
   
   function groupByIdpel(rows) {
     const map = new Map();
@@ -1435,12 +1512,19 @@ const Mod_scoring = (function(){
       const lastRow = rows[rows.length - 1];
       const changeIdx = lastDayaChangeIndex(rows);
       const sinceChange = rows.slice(changeIdx);
-      const avgJN = sinceChange.reduce((sum, r) => sum + r.JAMNYALA, 0) / sinceChange.length;
       const trendSlope = linearTrendSlope(sinceChange.map((r) => r.JAMNYALA));
       // normalize trend into 0..1 range (heuristic: +/-15 JN per month considered a strong trend)
       const trendNorm = Math.max(0, Math.min(1, (trendSlope + 15) / 30));
   
-      const mainCriteria = avgJN > s.ambangUtama;
+      const bulanDiAtasAmbang = sinceChange.filter((r) => r.JAMNYALA > s.ambangUtama);
+      const mainCriteria = bulanDiAtasAmbang.length >= MIN_BULAN_DI_ATAS_AMBANG;
+      // Rata-rata JN: kalau sudah lolos kriteria utama, pakai rata-rata bulan-bulan yang sudah di
+      // atas ambang saja (supaya tren naik terbaru tidak diredam oleh bulan-bulan rendah lama).
+      // Kalau belum lolos, tampilkan rata-rata seluruh riwayat sejak perubahan daya terakhir
+      // sebagai gambaran umum saja (tidak dipakai untuk skor karena skor = 0 saat belum lolos).
+      const avgJN = mainCriteria
+        ? bulanDiAtasAmbang.reduce((sum, r) => sum + r.JAMNYALA, 0) / bulanDiAtasAmbang.length
+        : sinceChange.reduce((sum, r) => sum + r.JAMNYALA, 0) / sinceChange.length;
       let subKategori = null;
       if (mainCriteria) subKategori = avgJN >= s.ambangTinggi ? "Tinggi" : "Sedang";
   
@@ -1502,6 +1586,9 @@ const Mod_scoring = (function(){
         usageHistory: rows.map((r) => ({ periode: r.THBLREK, daya: r.DAYA, pemkwh: r.PEMKWH, jamnyala: r.JAMNYALA })),
         riwayatProbing: op.riwayat || [],
         auditLog: op.auditLog || [],
+        // Log pengiriman promo broadcast - dicatat lewat "Kirim Promo" di Peta (lihat mapView.js),
+        // dipakai oleh kartu KPI promo di Dashboard untuk menghitung terkirim/responsif.
+        promoLog: op.promoLog || [],
         photoDataUrl: op.photoDataUrl || null,
         // Foto bukti pekerjaan - galeri bebas terpisah dari photoDataUrl (foto bangunan/rumah,
         // satu foto saja). Bisa lebih dari satu, ditambah kapan saja tanpa terikat ke satu
@@ -2612,7 +2699,7 @@ const Mod_auth = (function(){
     if (existing.length) return existing;
     return Promise.all(
       [
-        { nama: "Rudi Hartono", username: "rudi", pin: "1234", role: "Admin" },
+        { nama: "Eva Damayanti", username: "rudi", pin: "1234", role: "Admin" },
         { nama: "Sitti Rahma", username: "sitti", pin: "1234", role: "Petugas" },
         { nama: "Novita Torey", username: "novita", pin: "1234", role: "Petugas" },
       ].map(async (a) => {
@@ -3046,7 +3133,7 @@ const Mod_views_customerDetail = (function(){
   const {icon} = Mod_icons;
   const {Store, KEYS} = Mod_store;
   const {buildCustomerModels} = Mod_scoring;
-  const {formatRupiah, formatVA, formatDate, formatDateTime, monthLabel, escapeHtml, uid} = Mod_format;
+  const {formatRupiah, formatVA, formatDate, formatDateTime, monthLabel, escapeHtml, uid, toTitleCase, toAddressCase, compressImage} = Mod_format;
   const {lineAreaSVG} = Mod_charts;
   const {DEFAULT_COST_TABLE, lookupCost} = Mod_costTable;
   const {REJECT_REASON_OPTIONS, UNSAFE_REASON_OPTIONS, DAYA_LEVELS_LIST, MAIN_PIPELINE_ORDER} = Mod_dummyData;
@@ -3078,30 +3165,10 @@ const Mod_views_customerDetail = (function(){
     return buildCustomerModels({ identitas, pemakaian, progres, operasional, settings }).find((m) => m.idpel === idpel);
   }
   
-  function compressImage(file, maxDim = 900, quality = 0.72) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => {
-          let { width, height } = img;
-          if (width > height && width > maxDim) { height = Math.round((height * maxDim) / width); width = maxDim; }
-          else if (height > maxDim) { width = Math.round((width * maxDim) / height); height = maxDim; }
-          const canvas = document.createElement("canvas");
-          canvas.width = width; canvas.height = height;
-          canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL("image/jpeg", quality));
-        };
-        img.onerror = reject;
-        img.src = reader.result;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-  
   function waMessage(m) {
-    return encodeURIComponent(`Halo Bapak/Ibu ${m.nama}, saya dari petugas PLN Kab. Nabire ingin menawarkan program tambah daya listrik untuk rumah Bapak/Ibu di ${m.alamat}. Apakah berkenan kami jelaskan lebih lanjut?`);
+    // Nama & alamat dari sheet biasanya HURUF BESAR SEMUA - dirapikan ke Title Case (dan singkatan
+    // jalan dijabarkan penuh untuk alamat) supaya pesan sapaan ke pelanggan terbaca lebih sopan.
+    return encodeURIComponent(`Halo Bapak/Ibu ${toTitleCase(m.nama)}, saya dari petugas PLN Kab. Nabire ingin menawarkan program tambah daya listrik untuk rumah Bapak/Ibu di ${toAddressCase(m.alamat)}. Apakah berkenan kami jelaskan lebih lanjut?`);
   }
   
   function logAudit(idpel, field, aksi) {
@@ -3339,7 +3406,7 @@ const Mod_views_customerDetail = (function(){
             <span class="status-pill" style="background:${fresh.subKategori === "Tinggi" ? "var(--prio-tinggi)" : "var(--prio-sedang)"}; color:#fff; font-size:12px;">${fresh.subKategori}</span>
             <span style="font-weight:800; font-size:16px;">Skor ${fresh.score}</span>
           </div>
-          <div class="small-muted" style="margin-top:6px;">Rata-rata Jam Nyala ${fresh.avgJN} jam/bulan (dihitung sejak perubahan daya terakhir) · tren ${fresh.trendSlope >= 0 ? "+" : ""}${fresh.trendSlope} JN/bulan.
+          <div class="small-muted" style="margin-top:6px;">Rata-rata Jam Nyala ${fresh.avgJN} jam/bulan (dihitung dari bulan-bulan yang sudah di atas ambang, sejak perubahan daya terakhir) · tren ${fresh.trendSlope >= 0 ? "+" : ""}${fresh.trendSlope} JN/bulan.
           ${!fresh.dataStabil ? "<br/><b>Catatan:</b> data pemakaian pasca perubahan daya masih sedikit (&lt;3 bulan) - skor bisa berubah." : ""}
           </div>
           ${fresh.consistencyFlag ? `<div class="badge-flag" style="margin-top:8px;">${icon("warning")} Indikasi sudah tambah daya lewat jalur lain - mohon direkonsiliasi</div>` : ""}
@@ -3539,7 +3606,14 @@ const Mod_views_customerDetail = (function(){
         }, {});
         logAudit(idpel, "status", `Ubah status -> ${newStatus}${backfillEntries.length ? ` (${backfillEntries.length} tahap sebelumnya otomatis terisi)` : ""}`);
   
-        const updatedModel = { ...fresh, statusProbing: newStatus, targetDaya, biayaPenyambungan: biaya, tanggalUpdateTerakhir: nowIso, catatanTerakhir: entry.catatan };
+        // "petugas" di sini (dihitung di atas dari getCurrentUserName()) HARUS ikut disimpan ke
+        // updatedModel/progres - sebelumnya baris ini tidak menimpa fresh.petugas sama sekali,
+        // jadi kolom "Petugas" yang tersimpan (dan yang ditampilkan di Dashboard/Peta/ekspor)
+        // tetap memakai petugas RBM dari sheet "Data Identitas" (atau petugas hasil probing
+        // SEBELUMNYA), bukan akun yang sedang login saat entri status ini dibuat. Per permintaan
+        // Eva: nama petugas probing harus mengikuti akun yang dipakai saat itu, bukan penugasan
+        // RBM statis.
+        const updatedModel = { ...fresh, petugas, statusProbing: newStatus, targetDaya, biayaPenyambungan: biaya, tanggalUpdateTerakhir: nowIso, catatanTerakhir: entry.catatan };
         pushProgresSnapshot(updatedModel);
   
         toast(`Status diperbarui ke "${newStatus}".`, "ok");
@@ -3589,9 +3663,9 @@ const Mod_views_customerDetail = (function(){
 const Mod_views_mapView = (function(){
   const {icon} = Mod_icons;
   const {Store, KEYS} = Mod_store;
-  const {buildCustomerModels, filterQualified} = Mod_scoring;
+  const {buildCustomerModels, filterQualified, DEFAULT_SETTINGS} = Mod_scoring;
   const {createMapEngine} = Mod_mapEngine;
-  const {formatDateTime, daysAgo, escapeHtml, statusClass} = Mod_format;
+  const {formatDate, formatDateTime, daysAgo, escapeHtml, statusClass} = Mod_format;
   const {orderByNearestPath} = Mod_routePlanning;
   const {openCustomerDetail} = Mod_views_customerDetail;
   const {PETUGAS_SEED} = Mod_dummyData;
@@ -3655,6 +3729,155 @@ const Mod_views_mapView = (function(){
     const set = getVisitPlanIds();
     if (set.has(idpel)) set.delete(idpel); else set.add(idpel);
     setVisitPlanIds(set);
+  }
+  
+  // ---- Kirim Promo (broadcast) - permintaan Eva, 2026-07: bukan cuma pendekatan door-to-door
+  // personal, tapi juga bisa dipakai kirim info promo (mis. "Promo Tambah Daya 14-27 Juli") ke
+  // banyak pelanggan sekaligus. WhatsApp tidak punya cara resmi/gratis untuk kirim otomatis massal
+  // dari luar aplikasi WhatsApp itu sendiri, jadi alurnya semi-manual: pelanggan disaring dulu lewat
+  // filter yang sudah ada di halaman ini (Rute/Petugas/Status/dll), lalu tombol "Kirim Promo" di
+  // bawah menyiapkan daftar nomor + teks pesan yang tinggal disalin-tempel ke Siaran Baru/grup
+  // WhatsApp. "Tandai Sudah Dikirim" mencatat waktunya per pelanggan (operasional[idpel].promoLog)
+  // supaya kartu KPI promo di Dashboard bisa menghitung berapa yang sudah dikirimi & berapa yang
+  // responsif setelahnya. ----
+  function getPromoList() {
+    const stored = Store.get(KEYS.SETTINGS, {});
+    // Migrasi format promo LAMA (satu objek "promo") -> BARU (daftar "promoList") - lihat catatan
+    // yang sama di views/settings.js.
+    if (!stored.promoList && stored.promo) return [{ id: "promo_default", brosurDataUrl: null, ...stored.promo }];
+    return stored.promoList && stored.promoList.length ? stored.promoList : DEFAULT_SETTINGS.promoList;
+  }
+  
+  // Promo yang sedang berjalan (tanggal hari ini di dalam rentang mulai-selesai) dijadikan pilihan
+  // default saat membuka modal Kirim Promo - kalau tidak ada yang aktif, pilih yang paling dekat
+  // akan datang, atau yang terakhir ditambahkan sebagai fallback terakhir.
+  function pickDefaultPromo(promoList) {
+    if (!promoList.length) return null;
+    const now = new Date();
+    const active = promoList.find((p) => {
+      const start = p.mulai ? new Date(p.mulai + "T00:00:00") : null;
+      const end = p.selesai ? new Date(p.selesai + "T23:59:59") : null;
+      return (!start || now >= start) && (!end || now <= end);
+    });
+    if (active) return active;
+    const upcoming = promoList.filter((p) => p.mulai && new Date(p.mulai) > now).sort((a, b) => new Date(a.mulai) - new Date(b.mulai));
+    if (upcoming.length) return upcoming[0];
+    return promoList[promoList.length - 1];
+  }
+  
+  function toWaNumber(phone) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    if (!digits) return "";
+    if (digits.startsWith("62")) return digits;
+    if (digits.startsWith("0")) return "62" + digits.slice(1);
+    return digits;
+  }
+  
+  function logPromoSent(idpelList, promo) {
+    const nowIso = new Date().toISOString();
+    Store.update(KEYS.OPERASIONAL, (all) => {
+      const next = { ...all };
+      idpelList.forEach((idpel) => {
+        const op = next[idpel] || { riwayat: [], auditLog: [], photoDataUrl: null, coordOverride: null, buktiPekerjaan: [], promoLog: [] };
+        next[idpel] = { ...op, promoLog: [...(op.promoLog || []), { waktu: nowIso, promoId: promo.id, judul: promo.judul }] };
+      });
+      return next;
+    }, {});
+  }
+  
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  
+  function openPromoModal(models) {
+    document.querySelectorAll(".modal-backdrop").forEach((el) => el.remove());
+    const promoList = getPromoList();
+    if (!promoList.length) {
+      toast("Belum ada periode promo - tambahkan dulu di Pengaturan > Promo Tambah Daya.", "err");
+      return;
+    }
+    const eligible = models.filter((m) => m.kontak1);
+    const tanpaNomor = models.length - eligible.length;
+    const numbersText = eligible.map((m) => toWaNumber(m.kontak1)).join("\n");
+    let selectedPromo = pickDefaultPromo(promoList);
+  
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="modal-sheet">
+        <div class="modal-header">
+          <h3>Kirim Promo (${eligible.length} pelanggan)</h3>
+          <button class="modal-close">${icon("close")}</button>
+        </div>
+        <div class="modal-body">
+          <p class="small-muted">Sesuai filter yang aktif di halaman Peta saat ini${tanpaNomor ? ` - ${tanpaNomor} pelanggan tidak punya nomor telepon dan tidak ikut disalin` : ""}.</p>
+          ${promoList.length > 1 ? `
+          <div class="field">
+            <label>Periode Promo</label>
+            <select id="promoCampaignSelect">
+              ${promoList.map((p) => `<option value="${p.id}" ${p.id === selectedPromo.id ? "selected" : ""}>${escapeHtml(p.judul)} (${formatDate(p.mulai)} - ${formatDate(p.selesai)})</option>`).join("")}
+            </select>
+          </div>` : ""}
+          <div id="promoCampaignBody"></div>
+          <ol class="small-muted" style="padding-left:18px; margin:10px 0;">
+            <li>Salin nomor, pesan, &amp; unduh brosur (kalau ada) di atas.</li>
+            <li>Buka WhatsApp -&gt; Chat Baru -&gt; Siaran Baru (atau grup broadcast yang sudah ada).</li>
+            <li>Tempel nomor-nomor tsb untuk menambahkan penerima.</li>
+            <li>Tempel pesan promo + lampirkan brosur (kalau ada), lalu kirim.</li>
+          </ol>
+          <button class="btn block" id="markPromoSentBtn" ${eligible.length ? "" : "disabled"}>Tandai Sudah Dikirim ke ${eligible.length} Pelanggan</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+  
+    function renderCampaignBody() {
+      const bodyEl = backdrop.querySelector("#promoCampaignBody");
+      bodyEl.innerHTML = `
+        <div class="field">
+          <label>${escapeHtml(selectedPromo.judul)} - Pesan Promo</label>
+          <textarea id="promoMessageText" rows="4" readonly>${escapeHtml(selectedPromo.pesan)}</textarea>
+          <button class="btn secondary sm" id="copyPromoMessageBtn" style="margin-top:6px;">${icon("download")} Salin Pesan</button>
+        </div>
+        ${selectedPromo.brosurDataUrl ? `
+        <div class="field">
+          <label>Brosur</label>
+          <img src="${selectedPromo.brosurDataUrl}" alt="Brosur ${escapeHtml(selectedPromo.judul)}" style="max-width:200px; border-radius:8px; display:block; margin-bottom:6px;" />
+          <a class="btn secondary sm" id="downloadBrosurBtn" download="brosur-${(selectedPromo.judul || "promo").replace(/\s+/g, "-").toLowerCase()}.jpg" href="${selectedPromo.brosurDataUrl}">${icon("download")} Unduh Brosur</a>
+        </div>` : ""}
+        <div class="field">
+          <label>Nomor WhatsApp (${eligible.length})</label>
+          <textarea id="promoNumbersText" rows="6" readonly>${escapeHtml(numbersText)}</textarea>
+          <button class="btn secondary sm" id="copyPromoNumbersBtn" style="margin-top:6px;">${icon("download")} Salin Nomor</button>
+        </div>
+      `;
+      bodyEl.querySelector("#copyPromoMessageBtn").addEventListener("click", async () => {
+        const ok = await copyToClipboard(selectedPromo.pesan);
+        toast(ok ? "Pesan promo disalin." : "Gagal menyalin - salin manual dari kotak teks di atas.", ok ? "ok" : "err");
+      });
+      bodyEl.querySelector("#copyPromoNumbersBtn").addEventListener("click", async () => {
+        const ok = await copyToClipboard(numbersText);
+        toast(ok ? "Daftar nomor disalin." : "Gagal menyalin - salin manual dari kotak teks di atas.", ok ? "ok" : "err");
+      });
+    }
+    renderCampaignBody();
+  
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector(".modal-close").addEventListener("click", () => backdrop.remove());
+    backdrop.querySelector("#promoCampaignSelect")?.addEventListener("change", (e) => {
+      selectedPromo = promoList.find((p) => p.id === e.target.value) || selectedPromo;
+      renderCampaignBody();
+    });
+    backdrop.querySelector("#markPromoSentBtn").addEventListener("click", () => {
+      logPromoSent(eligible.map((m) => m.idpel), selectedPromo);
+      toast(`Promo "${selectedPromo.judul}" ditandai terkirim ke ${eligible.length} pelanggan.`, "ok");
+      backdrop.remove();
+    });
   }
   
   function getModels() {
@@ -3903,7 +4126,8 @@ const Mod_views_mapView = (function(){
       // numbering is unaffected since those are computed over the full `filtered` set already.
       footerEl.innerHTML = filtered.length
         ? `<div>Menampilkan ${startIdx + 1} - ${startIdx + shown.length} dari ${filtered.length} pelanggan${routeMode ? " · diurutkan sebagai rute kunjungan (terdekat -> terjauh)" : ""}</div>`
-          + `<div class="list-footer-actions"><button class="link-btn" id="addAllVisitBtn">${icon("plus")} Tambah semua (${filtered.length}) ke Kunjungan Hari Ini</button></div>`
+          + `<div class="list-footer-actions"><button class="link-btn" id="addAllVisitBtn">${icon("plus")} Tambah semua (${filtered.length}) ke Kunjungan Hari Ini</button>`
+          + `<button class="link-btn" id="kirimPromoBtn">${icon("whatsapp")} Kirim Promo ke ${filtered.length} Pelanggan Ini</button></div>`
           + (totalPages > 1 ? `
             <div class="pagination-row">
               <button class="page-arrow-btn" id="prevPageBtn" aria-label="Halaman sebelumnya" ${state.listPage <= 1 ? "disabled" : ""}>&larr;</button>
@@ -3926,6 +4150,9 @@ const Mod_views_mapView = (function(){
         updateVisitPlanBadge();
         refreshList();
       });
+  
+      const kirimPromoBtn = footerEl.querySelector("#kirimPromoBtn");
+      if (kirimPromoBtn) kirimPromoBtn.addEventListener("click", () => openPromoModal(filtered));
   
       listEl.querySelectorAll(".customer-row").forEach((rowEl) => {
         rowEl.addEventListener("click", () => openCustomerDetail(rowEl.dataset.idpel, () => renderMapView(root)));
@@ -4300,7 +4527,7 @@ const Mod_views_visitPlan = (function(){
 const Mod_views_dashboard = (function(){
   const {icon} = Mod_icons;
   const {Store, KEYS} = Mod_store;
-  const {buildCustomerModels, filterQualified} = Mod_scoring;
+  const {buildCustomerModels, DEFAULT_SETTINGS} = Mod_scoring;
   const {formatRupiah, formatNumber, formatVA, formatDate, daysAgo, monthLabel, escapeHtml} = Mod_format;
   const {donutSVG, lineAreaSVG, renderBarList, renderFunnel} = Mod_charts;
   const {DEFAULT_COST_TABLE, lookupCost} = Mod_costTable;
@@ -4318,20 +4545,43 @@ const Mod_views_dashboard = (function(){
     const operasional = Store.get(KEYS.OPERASIONAL, {});
     const settings = Store.get(KEYS.SETTINGS, {});
     const rawModels = buildCustomerModels({ identitas, pemakaian, progres, operasional, settings });
-    return { models: filterQualified(rawModels), settings, operasional };
+    // Populasi Dashboard = pelanggan yang SAAT INI memenuhi kriteria utama (mainCriteria, lihat
+    // scoring.js) DIGABUNG dengan pelanggan yang SUDAH PERNAH masuk proses probing (statusProbing
+    // bukan default "Belum Dikunjungi"). Kenapa perlu digabung, bukan mainCriteria saja: begitu
+    // pelanggan berhasil Tersambung, pemakaian listriknya biasanya normal lagi (karena kapasitas
+    // dayanya sudah naik) sehingga mainCriteria otomatis jadi false lagi. Tanpa union ini, pelanggan
+    // yang justru BERHASIL tambah daya akan "menghilang" dari Dashboard/KPI "Sudah Tambah Daya"/
+    // Funnel Konversi begitu data pemakaian terbarunya normal - padahal itu justru yang paling
+    // penting untuk tetap terlihat sebagai bukti keberhasilan (lihat permintaan Eva soal realisasi
+    // target, 2026-07). Sama halnya untuk pelanggan yang sedang di tengah proses (Follow Up,
+    // Permohonan, dst) tapi pemakaian bulan-bulan terakhirnya kebetulan turun sementara - mereka
+    // tetap harus kelihatan di funnel/aging, bukan hilang begitu saja.
+    const engagedIdpel = new Set(rawModels.filter((m) => m.statusProbing !== "Belum Dikunjungi").map((m) => m.idpel));
+    const models = rawModels.filter((m) => m.mainCriteria || engagedIdpel.has(m.idpel));
+    // rawModels (SEMUA pelanggan, tidak dibatasi mainCriteria/engaged) juga dikembalikan terpisah -
+    // dipakai khusus untuk statistik promo di bawah, karena promo broadcast bisa saja dikirim ke
+    // pelanggan di luar populasi "target" JN (mis. lewat filter Rute tertentu di Peta), jadi
+    // penghitungan terkirim/responsif tidak boleh ikut terpotong oleh kriteria target.
+    return { models, rawModels, settings, operasional };
   }
   
   function applyDashFilters(models) {
     return models.filter((m) => (!state.rute || m.rute === state.rute) && (!state.petugas || m.petugas === state.petugas));
   }
   
+  // Funnel Konversi stage index for a customer - per Eva's report, this must reflect their CURRENT
+  // status only, not the highest stage they ever historically passed through. This used to also
+  // scan riwayatProbing (the status-change history log) and take whichever was higher, so a
+  // customer whose status was later corrected/reverted backward (e.g. wrongly marked "Bayar", then
+  // fixed back to "Follow Up" once the mistake was caught) would still be counted at the old,
+  // higher "Bayar" stage forever - the funnel never caught up with the correction. MAIN_PIPELINE_ORDER
+  // is a strictly linear progression (dummyData.js), so a customer's CURRENT statusProbing index
+  // already implies every earlier stage on its own - no need to also look at history for that.
+  // "Ditolak"/"Tidak Bisa Dikunjungi" aren't part of this linear pipeline (see PIPELINE_STATUSES in
+  // dummyData.js) and correctly return -1 here (not counted in any funnel stage) - those customers
+  // are tracked separately by the "Kategori Alasan Gagal/Tolak" and "...Tidak Bisa Dikunjungi" charts.
   function maxReachedIndex(m) {
-    let idx = PIPELINE_MAIN.indexOf(m.statusProbing);
-    m.riwayatProbing.forEach((r) => {
-      const i = PIPELINE_MAIN.indexOf(r.tahap);
-      if (i > idx) idx = i;
-    });
-    return idx;
+    return PIPELINE_MAIN.indexOf(m.statusProbing);
   }
   
   function toCSV(rows, headers) {
@@ -4408,7 +4658,7 @@ const Mod_views_dashboard = (function(){
   }
   
   function renderDashboard(root) {
-    const { models, settings, operasional } = getAllData();
+    const { models, rawModels, settings, operasional } = getAllData();
     const routes = [...new Set(models.map((m) => m.rute).filter(Boolean))].sort();
     // Same fix as mapView.js's petugas filter: PETUGAS_SEED is a hardcoded list of DUMMY names
     // ("Rudi Hartono", "Sitti Rahma", ...) from dummyData.js, unrelated to whoever's actually in
@@ -4433,6 +4683,54 @@ const Mod_views_dashboard = (function(){
   
     const prioritasTinggiAktif = filtered.filter((m) => m.subKategori === "Tinggi" && !["Tersambung", "Ditolak"].includes(m.statusProbing));
     const tidakBisaDikunjungi = filtered.filter((m) => m.statusProbing === "Tidak Bisa Dikunjungi");
+  
+    // Realisasi Target - persentase dari seluruh populasi target (filtered, sudah termasuk yang
+    // sudah selesai/Tersambung berkat union di getAllData) yang sudah berhasil Tersambung. Ini
+    // jawaban langsung untuk "apakah project assignment saya berhasil": dari sekian pelanggan yang
+    // pernah/sedang jadi target, berapa persen yang sudah tuntas.
+    const realisasiPct = filtered.length ? Math.round((tersambungAll.length / filtered.length) * 100) : 0;
+    const belumTersambung = filtered.filter((m) => m.statusProbing !== "Tersambung");
+  
+    // Kirim Promo - permintaan Eva, 2026-07: berapa pelanggan yang sudah dikirimi promo (via tombol
+    // "Kirim Promo" di Peta, lihat mapView.js), dan berapa yang "responsif" (ada progres probing
+    // baru SETELAH promo dikirim). Promo BISA BERULANG dengan beberapa periode berbeda dari waktu
+    // ke waktu (bukan cuma satu kali) - dihitung PER PERIODE (bukan digabung jadi satu angka besar)
+    // supaya performa tiap periode promo tetap kelihatan terpisah, lihat "Riwayat Promo" di bawah.
+    // Dihitung dari rawModels (bukan `filtered`/`models`) supaya tidak ikut terpotong kriteria
+    // target JN - promo bisa saja menjangkau pelanggan di luar populasi target saat ini.
+    const promoList = (() => {
+      const stored = settings.promoList;
+      if (stored && stored.length) return stored;
+      if (!stored && settings.promo) return [{ id: "promo_default", brosurDataUrl: null, ...settings.promo }]; // migrasi format lama
+      return DEFAULT_SETTINGS.promoList;
+    })();
+    const promoRawFiltered = applyDashFilters(rawModels);
+    function statsForPromo(promo) {
+      const mulai = promo.mulai ? new Date(promo.mulai + "T00:00:00") : null;
+      const selesai = promo.selesai ? new Date(promo.selesai + "T23:59:59") : null;
+      const entryFor = (m) => (m.promoLog || []).find((p) => p.promoId === promo.id || (!p.promoId && p.judul === promo.judul));
+      const penerima = promoRawFiltered.filter((m) => entryFor(m));
+      const responsif = penerima.filter((m) => {
+        const entry = entryFor(m);
+        const sentTime = new Date(entry.waktu);
+        return (m.riwayatProbing || []).some((r) => new Date(r.tanggal) > sentTime);
+      });
+      return { promo, mulai, selesai, penerima, responsif, pct: penerima.length ? Math.round((responsif.length / penerima.length) * 100) : 0 };
+    }
+    const promoStats = promoList.map(statsForPromo);
+    // Kartu KPI utama menyorot periode yang PALING RELEVAN sekarang: yang sedang berjalan (hari ini
+    // ada di antara mulai-selesai), kalau tidak ada pilih yang paling dekat akan datang, kalau tidak
+    // ada juga pilih yang terakhir ditambahkan - sama seperti pemilihan default di mapView.js supaya
+    // konsisten dengan promo mana yang otomatis terpilih saat Eva klik "Kirim Promo" di Peta.
+    // Sengaja pakai new Date() (tanggal ASLI hari ini), BUKAN variabel `now` di atas yang
+    // di-hardcode ke 3 Juli 2026 untuk keperluan data contoh/dummy - pemilihan promo mana yang
+    // "sedang berjalan" harus selalu mengikuti tanggal sungguhan, sama seperti timestamp promoLog
+    // yang dicatat mapView.js (juga new Date() asli, bukan `now` yang di-hardcode).
+    const todayReal = new Date();
+    const headlinePromoStat = promoStats.find((s) => (!s.mulai || todayReal >= s.mulai) && (!s.selesai || todayReal <= s.selesai))
+      || [...promoStats].filter((s) => s.mulai && s.mulai > todayReal).sort((a, b) => a.mulai - b.mulai)[0]
+      || promoStats[promoStats.length - 1]
+      || null;
   
     const targetBulanan = settings.targetBulanan || 20;
     const capaianPct = targetBulanan ? Math.round((tersambungThisMonth.length / targetBulanan) * 100) : 0;
@@ -4547,12 +4845,15 @@ const Mod_views_dashboard = (function(){
           <div class="card kpi-card" data-kpi="total"><div class="kpi-label">Total Pelanggan Target</div><div class="kpi-value">${formatNumber(filtered.length)}</div><div class="kpi-sub">${prioritasTinggiAktif.length} masih perlu tindakan</div></div>
           <div class="card kpi-card" data-kpi="prioritasTinggi"><div class="kpi-label">Prioritas Tinggi (Aktif)</div><div class="kpi-value danger">${formatNumber(prioritasTinggiAktif.length)}</div><div class="kpi-sub">belum tuntas, perlu probing</div></div>
           <div class="card kpi-card" data-kpi="sudahTambahDaya"><div class="kpi-label">Sudah Tambah Daya</div><div class="kpi-value ok">${formatNumber(tersambungAll.length)}</div><div class="kpi-sub">hasil probing, status Tersambung</div></div>
+          <div class="card kpi-card" data-kpi="realisasiTarget"><div class="kpi-label">Realisasi Target</div><div class="kpi-value ok">${realisasiPct}%</div><div class="kpi-sub">${formatNumber(tersambungAll.length)} dari ${formatNumber(filtered.length)} target sudah Tersambung</div></div>
           <div class="card kpi-card" data-kpi="tersambungBulanIni"><div class="kpi-label">Tersambung (Bulan Ini)</div><div class="kpi-value">${formatNumber(tersambungThisMonth.length)}</div><div class="kpi-sub">${deltaVsLastMonth >= 0 ? "+" : ""}${deltaVsLastMonth} vs bulan lalu</div></div>
           <div class="card kpi-card" data-kpi="capaian"><div class="kpi-label">Capaian vs Target Bulanan</div><div class="kpi-value">${capaianPct}%</div><div class="kpi-sub">Target: ${targetBulanan}/bulan</div></div>
           <div class="card kpi-card" data-kpi="realisasiBiaya"><div class="kpi-label">Realisasi Biaya</div><div class="kpi-value" style="font-size:16px;">${formatRupiah(realisasiBiaya)}</div><div class="kpi-sub">${tersambungAll.length} transaksi selesai</div></div>
           <div class="card kpi-card" data-kpi="realisasiDaya"><div class="kpi-label">Realisasi Tambah Daya</div><div class="kpi-value" style="font-size:16px;">${realisasiKVA.toFixed(1)} kVA</div><div class="kpi-sub">akumulasi Tersambung</div></div>
           <div class="card kpi-card" data-kpi="estimasiPendapatan"><div class="kpi-label">Estimasi Potensi Pendapatan</div><div class="kpi-value" style="font-size:16px;">${formatRupiah(estimasiPendapatan)}</div><div class="kpi-sub">dari target belum closing</div></div>
           <div class="card kpi-card" data-kpi="tidakBisaDikunjungi"><div class="kpi-label">Tidak Bisa Dikunjungi</div><div class="kpi-value">${formatNumber(tidakBisaDikunjungi.length)}</div><div class="kpi-sub">lokasi ditandai tidak aman</div></div>
+          ${headlinePromoStat ? `
+          <div class="card kpi-card" data-kpi="promoPenerima"><div class="kpi-label">${escapeHtml(headlinePromoStat.promo.judul)}</div><div class="kpi-value">${formatNumber(headlinePromoStat.penerima.length)}</div><div class="kpi-sub">${formatDate(headlinePromoStat.promo.mulai)} - ${formatDate(headlinePromoStat.promo.selesai)} · ${headlinePromoStat.responsif.length} responsif (${headlinePromoStat.pct}%)</div></div>` : ""}
         </div>
   
         <div class="grid-2" style="margin-top:14px;">
@@ -4588,6 +4889,18 @@ const Mod_views_dashboard = (function(){
             ${topRute.length ? renderBarList(topRute) : '<div class="small-muted">Belum ada realisasi.</div>'}
           </div>
         </div>
+  
+        ${promoStats.length ? `
+        <div class="card" style="margin-top:10px;">
+          <div class="card-title">${icon("whatsapp")} Riwayat Promo</div>
+          <ul class="list-plain" id="promoHistoryList">
+            ${[...promoStats].sort((a, b) => (b.mulai || 0) - (a.mulai || 0)).map((s) => `
+              <li data-promo-id="${s.promo.id}" style="cursor:pointer;">
+                <span>${escapeHtml(s.promo.judul)} <span class="small-muted">(${formatDate(s.promo.mulai)} - ${formatDate(s.promo.selesai)})</span></span>
+                <span class="small-muted">${s.penerima.length} terkirim · ${s.responsif.length} responsif (${s.pct}%)</span>
+              </li>`).join("")}
+          </ul>
+        </div>` : ""}
   
         <div class="grid-2" style="margin-top:10px;">
           <div class="card">
@@ -4648,6 +4961,24 @@ const Mod_views_dashboard = (function(){
       li.addEventListener("click", () => openCustomerDetail(li.dataset.idpel, () => renderDashboard(root)));
     });
   
+    root.querySelectorAll("#promoHistoryList li[data-promo-id]").forEach((li) => {
+      li.addEventListener("click", () => {
+        const s = promoStats.find((x) => x.promo.id === li.dataset.promoId);
+        if (!s) return;
+        openKpiDetailModal({
+          title: `${s.promo.judul} - Penerima (${formatDate(s.promo.mulai)} - ${formatDate(s.promo.selesai)})`,
+          models: s.penerima,
+          rowMeta: (m) => {
+            const entry = (m.promoLog || []).find((p) => p.promoId === s.promo.id || (!p.promoId && p.judul === s.promo.judul));
+            const responsif = s.responsif.some((r) => r.idpel === m.idpel);
+            return `Dikirim ${formatDate(entry?.waktu)} · ${responsif ? "responsif" : "belum ada respons"}`;
+          },
+          exportPrefix: `gemar-tambah-daya-promo-${s.promo.id}`,
+          onAfterCustomerChange: () => renderDashboard(root),
+        });
+      });
+    });
+  
     // Every KPI card opens a detail modal on click (see openKpiDetailModal above) - each entry here
     // says which customers back that card's number, how to label each row, and what the per-card
     // export should contain. Reconciled 1:1 against the number shown on the card itself so a
@@ -4663,6 +4994,10 @@ const Mod_views_dashboard = (function(){
         // keberhasilan probing, jadi tetap ditampilkan terpisah di kartu "Pemeriksaan Konsistensi
         // Data" di bawah, tidak lagi ikut dihitung di sini.
         models: tersambungAll,
+      },
+      realisasiTarget: {
+        title: `Realisasi Target (${realisasiPct}%) - Sisa Belum Tersambung`,
+        models: belumTersambung,
       },
       tersambungBulanIni: { title: "Tersambung (Bulan Ini)", models: tersambungThisMonth },
       capaian: { title: "Capaian vs Target Bulanan (Tersambung Bulan Ini)", models: tersambungThisMonth },
@@ -4692,6 +5027,17 @@ const Mod_views_dashboard = (function(){
       },
       tidakBisaDikunjungi: { title: "Tidak Bisa Dikunjungi", models: tidakBisaDikunjungi },
     };
+    if (headlinePromoStat) {
+      kpiConfigs.promoPenerima = {
+        title: `${headlinePromoStat.promo.judul} - Penerima (${formatDate(headlinePromoStat.promo.mulai)} - ${formatDate(headlinePromoStat.promo.selesai)})`,
+        models: headlinePromoStat.penerima,
+        rowMeta: (m) => {
+          const entry = (m.promoLog || []).find((p) => p.promoId === headlinePromoStat.promo.id || (!p.promoId && p.judul === headlinePromoStat.promo.judul));
+          const responsif = headlinePromoStat.responsif.some((r) => r.idpel === m.idpel);
+          return `Dikirim ${formatDate(entry?.waktu)} · ${responsif ? "responsif" : "belum ada respons"}`;
+        },
+      };
+    }
   
     root.querySelectorAll(".kpi-card[data-kpi]").forEach((card) => {
       card.addEventListener("click", () => {
@@ -4860,15 +5206,39 @@ const Mod_views_settings = (function(){
   const {DEFAULT_SETTINGS, buildCustomerModels} = Mod_scoring;
   const {DEFAULT_COST_TABLE, COST_TABLE_LAST_UPDATED_DEFAULT} = Mod_costTable;
   const {getAccounts, createAccount, resetPin, renameAccount, setAccountActive, getSession} = Mod_auth;
-  const {formatDate, formatRupiah, escapeHtml} = Mod_format;
+  const {formatDate, formatRupiah, escapeHtml, uid, compressImage} = Mod_format;
   const {toast, refreshShellHeader} = Mod_views_shell;
   
   function getSettings() {
-    return { ...DEFAULT_SETTINGS, costTable: DEFAULT_COST_TABLE, costTableUpdated: COST_TABLE_LAST_UPDATED_DEFAULT, google: {}, ...Store.get(KEYS.SETTINGS, {}) };
+    const stored = Store.get(KEYS.SETTINGS, {});
+    const merged = { ...DEFAULT_SETTINGS, costTable: DEFAULT_COST_TABLE, costTableUpdated: COST_TABLE_LAST_UPDATED_DEFAULT, google: {}, ...stored };
+    // Migrasi dari format promo LAMA (satu objek "promo") ke format BARU (daftar "promoList") -
+    // untuk perangkat yang sempat menyimpan pengaturan promo sebelum promo diubah jadi bisa
+    // berulang beberapa periode (permintaan Eva, 2026-07: "akan ada lagi jadi ada beberapa periode").
+    if (!stored.promoList && stored.promo) {
+      merged.promoList = [{ id: "promo_default", brosurDataUrl: null, ...stored.promo }];
+    }
+    return merged;
   }
   function saveSettings(patch) {
     Store.set(KEYS.SETTINGS, { ...getSettings(), ...patch });
   }
+  
+  // Status berjalan/belum/sudah selesai suatu periode promo, dibandingkan terhadap tanggal hari ini.
+  function promoStatus(p) {
+    const now = new Date();
+    const start = p.mulai ? new Date(p.mulai + "T00:00:00") : null;
+    const end = p.selesai ? new Date(p.selesai + "T23:59:59") : null;
+    if (start && now < start) return "Akan Datang";
+    if (end && now > end) return "Sudah Selesai";
+    return "Aktif Sekarang";
+  }
+  
+  // Form tambah/ubah promo dipakai bersama (satu form, dua mode) - state-nya level modul supaya
+  // tetap terbuka/mengingat promo mana yang sedang diedit setelah renderSettings() dipanggil ulang
+  // (mis. sesudah menyimpan pengaturan lain di halaman yang sama).
+  let promoFormOpen = false;
+  let editingPromoId = null; // null = mode tambah baru, selain itu = mode ubah promo dengan id ini
   
   // The "Wilayah & Petugas" card used to just print REGIONS/PETUGAS_SEED - a hardcoded SAMPLE list
   // from dummyData.js (Nabire, Nabire Barat, Yaro, ... / Rudi Hartono, Sitti Rahma, ...) that has
@@ -4936,6 +5306,7 @@ const Mod_views_settings = (function(){
             <div class="field" style="margin:0;"><label>Ambang Kriteria Utama (JN min. tampil, jam/bulan)</label><input type="number" id="ambangUtama" value="${settings.ambangUtama}" /></div>
             <div class="field" style="margin:0;"><label>Ambang Prioritas Tinggi (jam/bulan)</label><input type="number" id="ambangTinggi" value="${settings.ambangTinggi}" /></div>
           </div>
+          <p class="small-muted" style="margin-top:-4px;">Pelanggan jadi target begitu ada minimal 2 bulan (sejak perubahan daya terakhir, tidak harus berurutan) dengan JN di atas ambang ini - bukan dihitung dari rata-rata seluruh riwayat.</p>
           <div class="row2">
             <div class="field" style="margin:0;"><label>Bobot Tren Kenaikan (0-1)</label><input type="number" step="0.05" min="0" max="1" id="bobotTren" value="${settings.bobotTren}" /></div>
             <div class="field" style="margin:0;"><label>Target Tersambung / Bulan</label><input type="number" id="targetBulanan" value="${settings.targetBulanan}" /></div>
@@ -4965,6 +5336,14 @@ const Mod_views_settings = (function(){
             <button class="btn secondary sm" id="addCostRow">${icon("plus")} Tambah Baris</button>
             <button class="btn sm" id="saveCostTable">Simpan Tabel Biaya</button>
           </div>
+        </div>
+  
+        <div class="card">
+          <div class="card-title">${icon("whatsapp")} Promo Tambah Daya</div>
+          <p class="small-muted">Dipakai oleh tombol "Kirim Promo" di halaman Peta dan kartu KPI promo di Dashboard. Bisa lebih dari satu periode - riwayat performa tiap periode tetap tersimpan di Dashboard.</p>
+          <div id="promoList"></div>
+          <button class="btn secondary sm" id="addPromoBtn" style="margin-top:10px;">${icon("plus")} Tambah Periode Promo</button>
+          <div id="promoForm" class="hidden stack-8" style="margin-top:10px;"></div>
         </div>
   
         <div class="card">
@@ -5039,6 +5418,119 @@ const Mod_views_settings = (function(){
       });
     }
     renderAccounts();
+  
+    function renderPromoSection() {
+      const promoList = settings.promoList;
+      root.querySelector("#promoList").innerHTML = promoList.length
+        ? promoList.map((p) => `
+          <div class="acc-row" data-promo-id="${p.id}">
+            <div style="display:flex; gap:10px; align-items:center;">
+              ${p.brosurDataUrl ? `<img src="${p.brosurDataUrl}" alt="Brosur ${escapeHtml(p.judul)}" style="width:40px; height:40px; object-fit:cover; border-radius:6px; flex-shrink:0;" />` : ""}
+              <div>
+                <div class="an">${escapeHtml(p.judul)} <span class="small-muted">(${promoStatus(p)})</span></div>
+                <div class="au">${formatDate(p.mulai)} - ${formatDate(p.selesai)}${p.brosurDataUrl ? " · ada brosur" : " · belum ada brosur"}</div>
+              </div>
+            </div>
+            <div class="flags">
+              <button class="link-btn editPromoBtn">ubah</button>
+              <button class="link-btn deletePromoBtn">hapus</button>
+            </div>
+          </div>
+        `).join("")
+        : `<p class="small-muted">Belum ada periode promo - tambahkan lewat tombol di bawah.</p>`;
+  
+      root.querySelectorAll("#promoList [data-promo-id]").forEach((rowEl) => {
+        const id = rowEl.dataset.promoId;
+        rowEl.querySelector(".editPromoBtn").addEventListener("click", () => {
+          editingPromoId = id;
+          promoFormOpen = true;
+          renderSettings(root);
+        });
+        rowEl.querySelector(".deletePromoBtn").addEventListener("click", () => {
+          const p = promoList.find((x) => x.id === id);
+          if (!confirm(`Hapus periode promo "${p?.judul}"? Riwayat pengiriman yang sudah tercatat untuk pelanggan tidak ikut terhapus, tapi kartu KPI-nya di Dashboard tidak akan tampil lagi.`)) return;
+          saveSettings({ promoList: promoList.filter((x) => x.id !== id) });
+          toast("Periode promo dihapus.", "ok");
+          if (editingPromoId === id) { editingPromoId = null; promoFormOpen = false; }
+          renderSettings(root);
+        });
+      });
+  
+      const formEl = root.querySelector("#promoForm");
+      if (!promoFormOpen) { formEl.classList.add("hidden"); formEl.innerHTML = ""; return; }
+      formEl.classList.remove("hidden");
+      const editing = editingPromoId ? promoList.find((p) => p.id === editingPromoId) : null;
+      let pendingBrosurDataUrl = editing?.brosurDataUrl || null;
+      formEl.innerHTML = `
+        <div class="field"><label>Judul Promo</label><input id="promoJudul" value="${escapeHtml(editing?.judul || "")}" /></div>
+        <div class="field"><label>Pesan Promo (disalin ke WhatsApp)</label><textarea id="promoPesan" rows="3">${escapeHtml(editing?.pesan || "")}</textarea></div>
+        <div class="row2">
+          <div class="field" style="margin:0;"><label>Tanggal Mulai</label><input type="date" id="promoMulai" value="${editing?.mulai || ""}" /></div>
+          <div class="field" style="margin:0;"><label>Tanggal Selesai</label><input type="date" id="promoSelesai" value="${editing?.selesai || ""}" /></div>
+        </div>
+        <div class="field">
+          <label>Brosur (gambar - opsional)</label>
+          <div id="promoBrosurPreviewWrap">${pendingBrosurDataUrl ? `<img id="promoBrosurPreview" src="${pendingBrosurDataUrl}" alt="Brosur" style="max-width:160px; border-radius:8px; display:block; margin-bottom:6px;" />` : ""}</div>
+          <label class="btn secondary sm" style="cursor:pointer; display:inline-flex; width:auto;">${icon("upload")}<span>${pendingBrosurDataUrl ? "Ganti Brosur" : "Upload Brosur"}</span><input type="file" accept="image/*" id="promoBrosurInput" class="hidden" /></label>
+          ${pendingBrosurDataUrl ? `<button class="link-btn" id="removeBrosurBtn" style="margin-left:8px;">hapus brosur</button>` : ""}
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn" id="savePromoBtn">${editing ? "Simpan Perubahan" : "Tambah Promo"}</button>
+          <button class="btn secondary" id="cancelPromoBtn">Batal</button>
+        </div>
+      `;
+  
+      formEl.querySelector("#promoBrosurInput").addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          pendingBrosurDataUrl = await compressImage(file, 900, 0.75);
+          const wrap = formEl.querySelector("#promoBrosurPreviewWrap");
+          wrap.innerHTML = `<img id="promoBrosurPreview" src="${pendingBrosurDataUrl}" alt="Brosur" style="max-width:160px; border-radius:8px; display:block; margin-bottom:6px;" />`;
+          toast("Brosur siap - klik \"Tambah Promo\"/\"Simpan Perubahan\" untuk menyimpan.", "ok");
+        } catch {
+          toast("Gagal memuat gambar brosur.", "err");
+        }
+      });
+      formEl.querySelector("#removeBrosurBtn")?.addEventListener("click", () => {
+        pendingBrosurDataUrl = null;
+        formEl.querySelector("#promoBrosurPreviewWrap").innerHTML = "";
+        formEl.querySelector("#removeBrosurBtn").remove();
+      });
+  
+      formEl.querySelector("#cancelPromoBtn").addEventListener("click", () => {
+        promoFormOpen = false;
+        editingPromoId = null;
+        renderSettings(root);
+      });
+      formEl.querySelector("#savePromoBtn").addEventListener("click", () => {
+        const judul = formEl.querySelector("#promoJudul").value.trim();
+        const pesan = formEl.querySelector("#promoPesan").value.trim();
+        const mulai = formEl.querySelector("#promoMulai").value;
+        const selesai = formEl.querySelector("#promoSelesai").value;
+        if (!judul || !pesan || !mulai || !selesai) { toast("Lengkapi judul, pesan, dan tanggal mulai/selesai.", "err"); return; }
+        if (mulai > selesai) { toast("Tanggal mulai tidak boleh setelah tanggal selesai.", "err"); return; }
+        const entry = { id: editing?.id || uid("promo"), judul, pesan, mulai, selesai, brosurDataUrl: pendingBrosurDataUrl };
+        const nextList = editing ? promoList.map((p) => (p.id === entry.id ? entry : p)) : [...promoList, entry];
+        saveSettings({ promoList: nextList });
+        toast(editing ? "Periode promo diperbarui." : "Periode promo ditambahkan.", "ok");
+        promoFormOpen = false;
+        editingPromoId = null;
+        renderSettings(root);
+      });
+    }
+    renderPromoSection();
+    root.querySelector("#addPromoBtn").addEventListener("click", () => {
+      // Kalau formnya sudah terbuka dalam mode "tambah baru" (bukan sedang ubah salah satu), tombol
+      // ini jadi tombol tutup - selain itu selalu buka form kosong mode "tambah baru".
+      if (promoFormOpen && editingPromoId === null) {
+        promoFormOpen = false;
+      } else {
+        promoFormOpen = true;
+        editingPromoId = null;
+      }
+      renderSettings(root);
+    });
   
     root.querySelector("#addAccountBtn")?.addEventListener("click", () => {
       root.querySelector("#addAccountForm").classList.toggle("hidden");
