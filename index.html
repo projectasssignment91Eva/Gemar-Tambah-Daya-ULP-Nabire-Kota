@@ -1458,13 +1458,22 @@ const Mod_scoring = (function(){
       {
         id: "promo_default",
         judul: "Promo Tambah Daya",
-        pesan: "Halo Bapak/Ibu, PLN ULP Nabire Kota sedang mengadakan Promo Tambah Daya periode 14-27 Juli 2026! Nikmati kemudahan menambah daya listrik rumah Anda. Hubungi petugas kami untuk info lebih lanjut.",
+        pesan: "Halo Bapak/Ibu {nama}, PLN ULP Nabire Kota sedang mengadakan Promo Tambah Daya periode 14-27 Juli 2026! Nikmati kemudahan menambah daya listrik rumah Anda. Hubungi petugas kami untuk info lebih lanjut.",
         mulai: "2026-07-14",
         selesai: "2026-07-27",
-        brosurDataUrl: null,
+        brosurDataUrls: [], // bisa lebih dari satu gambar brosur per periode promo (permintaan Eva)
       },
     ],
   };
+  
+  // Satu periode promo dulunya cuma bisa punya SATU brosur ("brosurDataUrl", tunggal). Sekarang bisa
+  // lebih dari satu ("brosurDataUrls", daftar) - fungsi ini menormalkan entri promo LAMA yang sempat
+  // tersimpan dengan field tunggal itu supaya tetap tampil (dikonversi jadi daftar berisi 1 gambar),
+  // dipakai bersama oleh views/settings.js & views/mapView.js supaya konsisten.
+  function normalizePromoCampaign(p) {
+    if (p.brosurDataUrls) return p;
+    return { ...p, brosurDataUrls: p.brosurDataUrl ? [p.brosurDataUrl] : [] };
+  }
   
   // Jumlah bulan minimal (sejak perubahan daya terakhir, tidak harus berurutan) yang JN-nya harus
   // sudah melewati ambangUtama sebelum pelanggan resmi dianggap lolos kriteria utama/target.
@@ -1606,7 +1615,7 @@ const Mod_scoring = (function(){
     return models.filter((m) => m.mainCriteria);
   }
   
-  return {DEFAULT_SETTINGS, buildCustomerModels, filterQualified};
+  return {DEFAULT_SETTINGS, normalizePromoCampaign, buildCustomerModels, filterQualified};
 })();
 
 const Mod_mapEngine = (function(){
@@ -3663,9 +3672,9 @@ const Mod_views_customerDetail = (function(){
 const Mod_views_mapView = (function(){
   const {icon} = Mod_icons;
   const {Store, KEYS} = Mod_store;
-  const {buildCustomerModels, filterQualified, DEFAULT_SETTINGS} = Mod_scoring;
+  const {buildCustomerModels, filterQualified, DEFAULT_SETTINGS, normalizePromoCampaign} = Mod_scoring;
   const {createMapEngine} = Mod_mapEngine;
-  const {formatDate, formatDateTime, daysAgo, escapeHtml, statusClass} = Mod_format;
+  const {formatDate, formatDateTime, daysAgo, escapeHtml, statusClass, toTitleCase} = Mod_format;
   const {orderByNearestPath} = Mod_routePlanning;
   const {openCustomerDetail} = Mod_views_customerDetail;
   const {PETUGAS_SEED} = Mod_dummyData;
@@ -3744,8 +3753,10 @@ const Mod_views_mapView = (function(){
     const stored = Store.get(KEYS.SETTINGS, {});
     // Migrasi format promo LAMA (satu objek "promo") -> BARU (daftar "promoList") - lihat catatan
     // yang sama di views/settings.js.
-    if (!stored.promoList && stored.promo) return [{ id: "promo_default", brosurDataUrl: null, ...stored.promo }];
-    return stored.promoList && stored.promoList.length ? stored.promoList : DEFAULT_SETTINGS.promoList;
+    const list = !stored.promoList && stored.promo
+      ? [{ id: "promo_default", ...stored.promo }]
+      : (stored.promoList && stored.promoList.length ? stored.promoList : DEFAULT_SETTINGS.promoList);
+    return list.map(normalizePromoCampaign);
   }
   
   // Promo yang sedang berjalan (tanggal hari ini di dalam rentang mulai-selesai) dijadikan pilihan
@@ -3773,6 +3784,23 @@ const Mod_views_mapView = (function(){
     return digits;
   }
   
+  // "{nama}" di teks pesan promo (lihat DEFAULT_SETTINGS.promoList di scoring.js) diganti dengan
+  // nama pelanggan (Title Case, sama seperti waMessage() di customerDetail.js) - pesan tanpa
+  // placeholder ini dikirim apa adanya, jadi aman untuk promo lama yang belum pakai placeholder.
+  function personalizePesan(pesan, nama) {
+    return String(pesan || "").replace(/\{nama\}/gi, toTitleCase(nama));
+  }
+  
+  // Link wa.me PERSIS pola yang sama dengan tombol WhatsApp yang sudah terbukti jalan di halaman
+  // detail pelanggan (lihat waMessage()/tombol WhatsApp di customerDetail.js) - satu nomor, satu
+  // pesan siap isi, dibuka di tab baru. Ini yang dipakai per-baris di bawah, BUKAN lagi salin-nomor-
+  // lalu-tempel-ke-Siaran-Baru: WhatsApp tidak mengizinkan menambah nomor baru (yang belum
+  // tersimpan di kontak HP) ke Siaran Baru lewat tempel begitu saja, jadi cara lama itu memang
+  // tidak akan pernah benar-benar "terkirim" - persis laporan Eva.
+  function waLinkFor(m, promo) {
+    return `https://wa.me/${toWaNumber(m.kontak1)}?text=${encodeURIComponent(personalizePesan(promo.pesan, m.nama))}`;
+  }
+  
   function logPromoSent(idpelList, promo) {
     const nowIso = new Date().toISOString();
     Store.update(KEYS.OPERASIONAL, (all) => {
@@ -3783,6 +3811,10 @@ const Mod_views_mapView = (function(){
       });
       return next;
     }, {});
+  }
+  
+  function alreadySentFor(m, promo) {
+    return (m.promoLog || []).some((p) => p.promoId === promo.id || (!p.promoId && p.judul === promo.judul));
   }
   
   async function copyToClipboard(text) {
@@ -3803,7 +3835,6 @@ const Mod_views_mapView = (function(){
     }
     const eligible = models.filter((m) => m.kontak1);
     const tanpaNomor = models.length - eligible.length;
-    const numbersText = eligible.map((m) => toWaNumber(m.kontak1)).join("\n");
     let selectedPromo = pickDefaultPromo(promoList);
   
     const backdrop = document.createElement("div");
@@ -3815,7 +3846,7 @@ const Mod_views_mapView = (function(){
           <button class="modal-close">${icon("close")}</button>
         </div>
         <div class="modal-body">
-          <p class="small-muted">Sesuai filter yang aktif di halaman Peta saat ini${tanpaNomor ? ` - ${tanpaNomor} pelanggan tidak punya nomor telepon dan tidak ikut disalin` : ""}.</p>
+          <p class="small-muted">Sesuai filter yang aktif di halaman Peta saat ini${tanpaNomor ? ` - ${tanpaNomor} pelanggan tidak punya nomor telepon dan tidak ikut ditampilkan` : ""}.</p>
           ${promoList.length > 1 ? `
           <div class="field">
             <label>Periode Promo</label>
@@ -3824,13 +3855,6 @@ const Mod_views_mapView = (function(){
             </select>
           </div>` : ""}
           <div id="promoCampaignBody"></div>
-          <ol class="small-muted" style="padding-left:18px; margin:10px 0;">
-            <li>Salin nomor, pesan, &amp; unduh brosur (kalau ada) di atas.</li>
-            <li>Buka WhatsApp -&gt; Chat Baru -&gt; Siaran Baru (atau grup broadcast yang sudah ada).</li>
-            <li>Tempel nomor-nomor tsb untuk menambahkan penerima.</li>
-            <li>Tempel pesan promo + lampirkan brosur (kalau ada), lalu kirim.</li>
-          </ol>
-          <button class="btn block" id="markPromoSentBtn" ${eligible.length ? "" : "disabled"}>Tandai Sudah Dikirim ke ${eligible.length} Pelanggan</button>
         </div>
       </div>
     `;
@@ -3844,25 +3868,45 @@ const Mod_views_mapView = (function(){
           <textarea id="promoMessageText" rows="4" readonly>${escapeHtml(selectedPromo.pesan)}</textarea>
           <button class="btn secondary sm" id="copyPromoMessageBtn" style="margin-top:6px;">${icon("download")} Salin Pesan</button>
         </div>
-        ${selectedPromo.brosurDataUrl ? `
+        ${selectedPromo.brosurDataUrls.length ? `
         <div class="field">
-          <label>Brosur</label>
-          <img src="${selectedPromo.brosurDataUrl}" alt="Brosur ${escapeHtml(selectedPromo.judul)}" style="max-width:200px; border-radius:8px; display:block; margin-bottom:6px;" />
-          <a class="btn secondary sm" id="downloadBrosurBtn" download="brosur-${(selectedPromo.judul || "promo").replace(/\s+/g, "-").toLowerCase()}.jpg" href="${selectedPromo.brosurDataUrl}">${icon("download")} Unduh Brosur</a>
+          <label>Brosur (${selectedPromo.brosurDataUrls.length})</label>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            ${selectedPromo.brosurDataUrls.map((url, i) => `
+              <div>
+                <img src="${url}" alt="Brosur ${i + 1} - ${escapeHtml(selectedPromo.judul)}" style="max-width:160px; border-radius:8px; display:block; margin-bottom:6px;" />
+                <a class="btn secondary sm downloadBrosurBtn" download="brosur-${(selectedPromo.judul || "promo").replace(/\s+/g, "-").toLowerCase()}-${i + 1}.jpg" href="${url}">${icon("download")} Unduh</a>
+              </div>
+            `).join("")}
+          </div>
         </div>` : ""}
-        <div class="field">
-          <label>Nomor WhatsApp (${eligible.length})</label>
-          <textarea id="promoNumbersText" rows="6" readonly>${escapeHtml(numbersText)}</textarea>
-          <button class="btn secondary sm" id="copyPromoNumbersBtn" style="margin-top:6px;">${icon("download")} Salin Nomor</button>
-        </div>
+        <p class="small-muted" style="margin-top:10px;">Klik "Kirim WA" di tiap pelanggan untuk membuka WhatsApp dengan pesan yang sudah terisi otomatis - sama seperti tombol WhatsApp di halaman detail pelanggan. ${selectedPromo.brosurDataUrls.length ? "Lampirkan brosur yang sudah diunduh secara manual di WhatsApp sebelum kirim." : ""}</p>
+        <ul class="list-plain" id="promoSendList" style="max-height:280px; overflow:auto;">
+          ${eligible.map((m) => {
+            const sent = alreadySentFor(m, selectedPromo);
+            return `
+            <li data-idpel="${m.idpel}">
+              <span>${escapeHtml(m.nama)} <span class="small-muted">(${m.idpel})</span></span>
+              ${sent
+                ? `<span class="status-pill st-tersambung">${icon("check")} Sudah dikirim</span>`
+                : `<a class="btn secondary sm waSendLink" target="_blank" rel="noopener" data-idpel="${m.idpel}" href="${waLinkFor(m, selectedPromo)}">${icon("whatsapp")} Kirim WA</a>`}
+            </li>`;
+          }).join("") || `<li class="small-muted">Tidak ada pelanggan dengan nomor telepon pada filter ini.</li>`}
+        </ul>
       `;
       bodyEl.querySelector("#copyPromoMessageBtn").addEventListener("click", async () => {
-        const ok = await copyToClipboard(selectedPromo.pesan);
-        toast(ok ? "Pesan promo disalin." : "Gagal menyalin - salin manual dari kotak teks di atas.", ok ? "ok" : "err");
+        const ok = await copyToClipboard(personalizePesan(selectedPromo.pesan, ""));
+        toast(ok ? "Pesan promo disalin (tanpa nama - nama otomatis terisi kalau kirim lewat tombol \"Kirim WA\")." : "Gagal menyalin - salin manual dari kotak teks di atas.", ok ? "ok" : "err");
       });
-      bodyEl.querySelector("#copyPromoNumbersBtn").addEventListener("click", async () => {
-        const ok = await copyToClipboard(numbersText);
-        toast(ok ? "Daftar nomor disalin." : "Gagal menyalin - salin manual dari kotak teks di atas.", ok ? "ok" : "err");
+      bodyEl.querySelectorAll(".waSendLink").forEach((linkEl) => {
+        linkEl.addEventListener("click", () => {
+          // Klik ini membuka WhatsApp di tab baru (perilaku bawaan tautan wa.me, dibiarkan
+          // berjalan) SEKALIGUS langsung mencatat pengiriman utk pelanggan ini - baris di daftar
+          // langsung berubah jadi "Sudah dikirim" tanpa perlu tombol tandai terpisah lagi.
+          logPromoSent([linkEl.dataset.idpel], selectedPromo);
+          const li = linkEl.closest("li");
+          li.innerHTML = `<span>${li.querySelector("span").innerHTML}</span><span class="status-pill st-tersambung">${icon("check")} Sudah dikirim</span>`;
+        });
       });
     }
     renderCampaignBody();
@@ -3872,11 +3916,6 @@ const Mod_views_mapView = (function(){
     backdrop.querySelector("#promoCampaignSelect")?.addEventListener("change", (e) => {
       selectedPromo = promoList.find((p) => p.id === e.target.value) || selectedPromo;
       renderCampaignBody();
-    });
-    backdrop.querySelector("#markPromoSentBtn").addEventListener("click", () => {
-      logPromoSent(eligible.map((m) => m.idpel), selectedPromo);
-      toast(`Promo "${selectedPromo.judul}" ditandai terkirim ke ${eligible.length} pelanggan.`, "ok");
-      backdrop.remove();
     });
   }
   
@@ -4527,7 +4566,7 @@ const Mod_views_visitPlan = (function(){
 const Mod_views_dashboard = (function(){
   const {icon} = Mod_icons;
   const {Store, KEYS} = Mod_store;
-  const {buildCustomerModels, DEFAULT_SETTINGS} = Mod_scoring;
+  const {buildCustomerModels, DEFAULT_SETTINGS, normalizePromoCampaign} = Mod_scoring;
   const {formatRupiah, formatNumber, formatVA, formatDate, daysAgo, monthLabel, escapeHtml} = Mod_format;
   const {donutSVG, lineAreaSVG, renderBarList, renderFunnel} = Mod_charts;
   const {DEFAULT_COST_TABLE, lookupCost} = Mod_costTable;
@@ -4700,9 +4739,9 @@ const Mod_views_dashboard = (function(){
     // target JN - promo bisa saja menjangkau pelanggan di luar populasi target saat ini.
     const promoList = (() => {
       const stored = settings.promoList;
-      if (stored && stored.length) return stored;
-      if (!stored && settings.promo) return [{ id: "promo_default", brosurDataUrl: null, ...settings.promo }]; // migrasi format lama
-      return DEFAULT_SETTINGS.promoList;
+      const list = stored && stored.length ? stored
+        : (!stored && settings.promo ? [{ id: "promo_default", ...settings.promo }] : DEFAULT_SETTINGS.promoList); // migrasi format lama
+      return list.map(normalizePromoCampaign);
     })();
     const promoRawFiltered = applyDashFilters(rawModels);
     function statsForPromo(promo) {
@@ -5203,7 +5242,7 @@ const Mod_views_importData = (function(){
 const Mod_views_settings = (function(){
   const {icon} = Mod_icons;
   const {Store, KEYS} = Mod_store;
-  const {DEFAULT_SETTINGS, buildCustomerModels} = Mod_scoring;
+  const {DEFAULT_SETTINGS, buildCustomerModels, normalizePromoCampaign} = Mod_scoring;
   const {DEFAULT_COST_TABLE, COST_TABLE_LAST_UPDATED_DEFAULT} = Mod_costTable;
   const {getAccounts, createAccount, resetPin, renameAccount, setAccountActive, getSession} = Mod_auth;
   const {formatDate, formatRupiah, escapeHtml, uid, compressImage} = Mod_format;
@@ -5216,8 +5255,12 @@ const Mod_views_settings = (function(){
     // untuk perangkat yang sempat menyimpan pengaturan promo sebelum promo diubah jadi bisa
     // berulang beberapa periode (permintaan Eva, 2026-07: "akan ada lagi jadi ada beberapa periode").
     if (!stored.promoList && stored.promo) {
-      merged.promoList = [{ id: "promo_default", brosurDataUrl: null, ...stored.promo }];
+      merged.promoList = [{ id: "promo_default", ...stored.promo }];
     }
+    // Setiap entri juga dinormalkan lewat normalizePromoCampaign() supaya periode promo yang sempat
+    // tersimpan dengan brosur TUNGGAL (brosurDataUrl, sebelum "brosurnya ada dua bisa kah?") tetap
+    // tampil, dikonversi jadi daftar brosurDataUrls berisi 1 gambar.
+    merged.promoList = merged.promoList.map(normalizePromoCampaign);
     return merged;
   }
   function saveSettings(patch) {
@@ -5425,10 +5468,10 @@ const Mod_views_settings = (function(){
         ? promoList.map((p) => `
           <div class="acc-row" data-promo-id="${p.id}">
             <div style="display:flex; gap:10px; align-items:center;">
-              ${p.brosurDataUrl ? `<img src="${p.brosurDataUrl}" alt="Brosur ${escapeHtml(p.judul)}" style="width:40px; height:40px; object-fit:cover; border-radius:6px; flex-shrink:0;" />` : ""}
+              ${p.brosurDataUrls.length ? `<div style="display:flex; gap:4px; flex-shrink:0;">${p.brosurDataUrls.slice(0, 2).map((url) => `<img src="${url}" alt="Brosur ${escapeHtml(p.judul)}" style="width:40px; height:40px; object-fit:cover; border-radius:6px;" />`).join("")}</div>` : ""}
               <div>
                 <div class="an">${escapeHtml(p.judul)} <span class="small-muted">(${promoStatus(p)})</span></div>
-                <div class="au">${formatDate(p.mulai)} - ${formatDate(p.selesai)}${p.brosurDataUrl ? " · ada brosur" : " · belum ada brosur"}</div>
+                <div class="au">${formatDate(p.mulai)} - ${formatDate(p.selesai)} · ${p.brosurDataUrls.length ? `${p.brosurDataUrls.length} brosur` : "belum ada brosur"}</div>
               </div>
             </div>
             <div class="flags">
@@ -5460,7 +5503,10 @@ const Mod_views_settings = (function(){
       if (!promoFormOpen) { formEl.classList.add("hidden"); formEl.innerHTML = ""; return; }
       formEl.classList.remove("hidden");
       const editing = editingPromoId ? promoList.find((p) => p.id === editingPromoId) : null;
-      let pendingBrosurDataUrl = editing?.brosurDataUrl || null;
+      // Bisa lebih dari satu brosur per periode promo (permintaan Eva) - dikumpulkan di array ini,
+      // input file-nya "multiple" jadi bisa pilih beberapa sekaligus, dan bisa juga ditambah
+      // bertahap (upload lagi tanpa menghapus yang sudah ada).
+      let pendingBrosurDataUrls = editing?.brosurDataUrls ? [...editing.brosurDataUrls] : [];
       formEl.innerHTML = `
         <div class="field"><label>Judul Promo</label><input id="promoJudul" value="${escapeHtml(editing?.judul || "")}" /></div>
         <div class="field"><label>Pesan Promo (disalin ke WhatsApp)</label><textarea id="promoPesan" rows="3">${escapeHtml(editing?.pesan || "")}</textarea></div>
@@ -5469,10 +5515,9 @@ const Mod_views_settings = (function(){
           <div class="field" style="margin:0;"><label>Tanggal Selesai</label><input type="date" id="promoSelesai" value="${editing?.selesai || ""}" /></div>
         </div>
         <div class="field">
-          <label>Brosur (gambar - opsional)</label>
-          <div id="promoBrosurPreviewWrap">${pendingBrosurDataUrl ? `<img id="promoBrosurPreview" src="${pendingBrosurDataUrl}" alt="Brosur" style="max-width:160px; border-radius:8px; display:block; margin-bottom:6px;" />` : ""}</div>
-          <label class="btn secondary sm" style="cursor:pointer; display:inline-flex; width:auto;">${icon("upload")}<span>${pendingBrosurDataUrl ? "Ganti Brosur" : "Upload Brosur"}</span><input type="file" accept="image/*" id="promoBrosurInput" class="hidden" /></label>
-          ${pendingBrosurDataUrl ? `<button class="link-btn" id="removeBrosurBtn" style="margin-left:8px;">hapus brosur</button>` : ""}
+          <label>Brosur (gambar - boleh lebih dari satu, opsional)</label>
+          <div id="promoBrosurPreviewWrap" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px;"></div>
+          <label class="btn secondary sm" style="cursor:pointer; display:inline-flex; width:auto;">${icon("upload")}<span>Tambah Brosur</span><input type="file" accept="image/*" multiple id="promoBrosurInput" class="hidden" /></label>
         </div>
         <div style="display:flex; gap:8px;">
           <button class="btn" id="savePromoBtn">${editing ? "Simpan Perubahan" : "Tambah Promo"}</button>
@@ -5480,22 +5525,35 @@ const Mod_views_settings = (function(){
         </div>
       `;
   
+      function renderBrosurPreviews() {
+        const wrap = formEl.querySelector("#promoBrosurPreviewWrap");
+        wrap.innerHTML = pendingBrosurDataUrls.map((url, i) => `
+          <div style="position:relative;" data-brosur-i="${i}">
+            <img src="${url}" alt="Brosur ${i + 1}" style="width:80px; height:80px; object-fit:cover; border-radius:8px; display:block;" />
+            <button type="button" class="removeBrosurBtn" data-i="${i}" style="position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%; border:none; background:var(--danger,#E4483C); color:#fff; cursor:pointer; line-height:1;">×</button>
+          </div>
+        `).join("");
+        wrap.querySelectorAll(".removeBrosurBtn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            pendingBrosurDataUrls.splice(Number(btn.dataset.i), 1);
+            renderBrosurPreviews();
+          });
+        });
+      }
+      renderBrosurPreviews();
+  
       formEl.querySelector("#promoBrosurInput").addEventListener("change", async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
+        const files = [...e.target.files];
+        if (!files.length) return;
         try {
-          pendingBrosurDataUrl = await compressImage(file, 900, 0.75);
-          const wrap = formEl.querySelector("#promoBrosurPreviewWrap");
-          wrap.innerHTML = `<img id="promoBrosurPreview" src="${pendingBrosurDataUrl}" alt="Brosur" style="max-width:160px; border-radius:8px; display:block; margin-bottom:6px;" />`;
-          toast("Brosur siap - klik \"Tambah Promo\"/\"Simpan Perubahan\" untuk menyimpan.", "ok");
+          const compressed = await Promise.all(files.map((f) => compressImage(f, 900, 0.75)));
+          pendingBrosurDataUrls.push(...compressed);
+          renderBrosurPreviews();
+          toast(`${compressed.length} brosur siap - klik "${editing ? "Simpan Perubahan" : "Tambah Promo"}" untuk menyimpan.`, "ok");
         } catch {
-          toast("Gagal memuat gambar brosur.", "err");
+          toast("Gagal memuat salah satu gambar brosur.", "err");
         }
-      });
-      formEl.querySelector("#removeBrosurBtn")?.addEventListener("click", () => {
-        pendingBrosurDataUrl = null;
-        formEl.querySelector("#promoBrosurPreviewWrap").innerHTML = "";
-        formEl.querySelector("#removeBrosurBtn").remove();
+        e.target.value = ""; // supaya bisa pilih file yang sama lagi kalau perlu
       });
   
       formEl.querySelector("#cancelPromoBtn").addEventListener("click", () => {
@@ -5510,7 +5568,7 @@ const Mod_views_settings = (function(){
         const selesai = formEl.querySelector("#promoSelesai").value;
         if (!judul || !pesan || !mulai || !selesai) { toast("Lengkapi judul, pesan, dan tanggal mulai/selesai.", "err"); return; }
         if (mulai > selesai) { toast("Tanggal mulai tidak boleh setelah tanggal selesai.", "err"); return; }
-        const entry = { id: editing?.id || uid("promo"), judul, pesan, mulai, selesai, brosurDataUrl: pendingBrosurDataUrl };
+        const entry = { id: editing?.id || uid("promo"), judul, pesan, mulai, selesai, brosurDataUrls: pendingBrosurDataUrls };
         const nextList = editing ? promoList.map((p) => (p.id === entry.id ? entry : p)) : [...promoList, entry];
         saveSettings({ promoList: nextList });
         toast(editing ? "Periode promo diperbarui." : "Periode promo ditambahkan.", "ok");
