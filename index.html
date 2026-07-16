@@ -3853,6 +3853,40 @@ const Mod_views_mapView = (function(){
     }, {});
   }
   
+  // WhatsApp TIDAK menyediakan cara (API gratis/publik) bagi sebuah website untuk otomatis
+  // melampirkan gambar ke SATU chat tertentu yang sudah dibuka lewat wa.me - itu keterbatasan
+  // platform WhatsApp sendiri, bukan sesuatu yang bisa "diperbaiki" dari sisi aplikasi ini (lihat
+  // laporan Eva 2026-07: "brosur tidak terkirim"). Yang BISA dilakukan dari web: pakai Web Share
+  // API bawaan HP (navigator.share) untuk membuka menu "Bagikan" bawaan Android/iOS dengan
+  // gambar+teks sudah tergabung jadi satu paket - tinggal pilih WhatsApp lalu pilih kontaknya di
+  // sana. Ini didukung sebagian besar HP Android (Chrome) & iPhone (Safari 15+), tapi TIDAK di
+  // desktop, jadi selalu sediakan opsi unduh manual sebagai cadangan.
+  async function dataUrlToFile(dataUrl, filename) {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return new File([blob], filename, { type: blob.type || "image/jpeg" });
+  }
+  
+  function canShareFiles() {
+    return typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof navigator.canShare === "function";
+  }
+  
+  async function shareBrosurViaSheet(promo) {
+    try {
+      const files = await Promise.all(
+        promo.brosurDataUrls.map((url, i) => dataUrlToFile(url, `brosur-${(promo.judul || "promo").replace(/\s+/g, "-").toLowerCase()}-${i + 1}.jpg`))
+      );
+      if (!navigator.canShare({ files })) {
+        toast("Perangkat/browser ini belum mendukung bagikan gambar langsung - unduh brosur di atas, lalu lampirkan manual di WhatsApp.", "err");
+        return;
+      }
+      await navigator.share({ files, text: personalizePesan(promo.pesan, ""), title: promo.judul });
+    } catch (e) {
+      if (e.name === "AbortError") return; // pengguna membatalkan menu bagikan - bukan error
+      toast("Gagal membuka menu bagikan - unduh brosur di atas, lalu lampirkan manual di WhatsApp.", "err");
+    }
+  }
+  
   async function copyToClipboard(text) {
     try {
       await navigator.clipboard.writeText(text);
@@ -3915,8 +3949,17 @@ const Mod_views_mapView = (function(){
               </div>
             `).join("")}
           </div>
+          ${canShareFiles() ? `<button class="btn" id="shareBrosurBtn" style="margin-top:10px;">${icon("whatsapp")} Bagikan Brosur + Pesan (langsung ke WhatsApp)</button>` : ""}
+          <div class="field" style="background:var(--surface-2); border-radius:8px; padding:10px 12px; margin-top:10px;">
+            <b style="font-size:13px;">Penting - brosur TIDAK ikut otomatis terkirim lewat tombol "Kirim WA" di bawah</b>
+            <p class="small-muted" style="margin:4px 0 0;">WhatsApp tidak mengizinkan website manapun (termasuk aplikasi ini) menempelkan gambar otomatis ke satu chat tertentu - jadi gambar brosur harus dilampirkan sendiri, dengan salah satu cara ini:</p>
+            <ol class="small-muted" style="margin:6px 0 0; padding-left:18px;">
+              ${canShareFiles() ? `<li>Termudah (HP): tombol <b>"Bagikan Brosur + Pesan"</b> di atas - langsung buka menu Bagikan bawaan HP, tinggal pilih WhatsApp lalu pilih kontaknya.</li>` : ""}
+              <li>Atau: tombol <b>"Unduh"</b> di tiap gambar brosur di atas dulu, baru klik "Kirim WA" di pelanggan yang dituju, lalu di jendela WhatsApp yang terbuka tempelkan/lampirkan gambar yang baru diunduh tadi dari galeri sebelum menekan kirim.</li>
+            </ol>
+          </div>
         </div>` : ""}
-        <p class="small-muted" style="margin-top:10px;">Klik "Kirim WA" di tiap pelanggan untuk membuka WhatsApp dengan pesan yang sudah terisi otomatis - sama seperti tombol WhatsApp di halaman detail pelanggan. ${selectedPromo.brosurDataUrls.length ? "Lampirkan brosur yang sudah diunduh secara manual di WhatsApp sebelum kirim." : ""}</p>
+        <p class="small-muted" style="margin-top:10px;">Klik "Kirim WA" di tiap pelanggan untuk membuka WhatsApp dengan pesan yang sudah terisi otomatis - sama seperti tombol WhatsApp di halaman detail pelanggan.</p>
         <ul class="list-plain" id="promoSendList" style="max-height:280px; overflow:auto;">
           ${eligible.map((m) => `<li data-idpel="${m.idpel}"><span>${escapeHtml(m.nama)} <span class="small-muted">(${m.idpel})</span></span></li>`).join("") || `<li class="small-muted">Tidak ada pelanggan dengan nomor telepon pada filter ini.</li>`}
         </ul>
@@ -3925,6 +3968,7 @@ const Mod_views_mapView = (function(){
         const ok = await copyToClipboard(personalizePesan(selectedPromo.pesan, ""));
         toast(ok ? "Pesan promo disalin (tanpa nama - nama otomatis terisi kalau kirim lewat tombol \"Kirim WA\")." : "Gagal menyalin - salin manual dari kotak teks di atas.", ok ? "ok" : "err");
       });
+      bodyEl.querySelector("#shareBrosurBtn")?.addEventListener("click", () => shareBrosurViaSheet(selectedPromo));
   
       // Render/wire tiap baris pelanggan lewat 1 fungsi bersama supaya tombol "Kirim WA" <-> status
       // "Sudah dikirim" + "batalkan" bisa bolak-balik tanpa duplikasi logika render.
