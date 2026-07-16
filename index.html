@@ -2239,11 +2239,17 @@ const Mod_charts = (function(){
     return `<div class="stack-8">${stages.map((s, i) => {
       const pct = Math.max(6, (s.value / max) * 100);
       const convFromPrev = i > 0 && stages[i - 1].value > 0 ? Math.round((s.value / stages[i - 1].value) * 100) : 100;
+      // "current" (opsional - dilewatkan oleh dashboard.js) = jumlah pelanggan yang status
+      // probing-nya PERSIS di tahap ini sekarang, ditampilkan berdampingan dengan total kumulatif
+      // supaya kelihatan sekaligus mana yang sedang perlu ditindaklanjuti (current) vs total yang
+      // pernah/berhasil menembus tahap ini (value). Dibiarkan tersembunyi kalau tidak dilewatkan
+      // (dipakai juga oleh chart funnel lain yang belum butuh breakdown ini).
+      const currentBadge = s.current != null ? ` <span class="small-muted" title="Jumlah pelanggan yang status-nya PERSIS di tahap ini sekarang (belum lanjut ke tahap berikutnya)">· ${s.current} saat ini</span>` : "";
       return `
         <div>
           <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px;">
             <span>${s.label}</span>
-            <span style="font-weight:700;">${s.value}${i > 0 ? ` <span class="small-muted">(${convFromPrev}%)</span>` : ""}</span>
+            <span style="font-weight:700;">${s.value}${i > 0 ? ` <span class="small-muted">(${convFromPrev}%)</span>` : ""}${currentBadge}</span>
           </div>
           <div class="bar-track" style="height:16px; border-radius:6px;">
             <div class="bar-fill" style="width:${pct}%; height:100%; border-radius:6px; background:${s.color || "var(--brand-navy)"};"></div>
@@ -2708,7 +2714,7 @@ const Mod_auth = (function(){
     if (existing.length) return existing;
     return Promise.all(
       [
-        { nama: "Eva Damayanti", username: "rudi", pin: "1234", role: "Admin" },
+        { nama: "Eva Damayanti", username: "eva.damayanti", pin: "1234", role: "Admin" },
         { nama: "Sitti Rahma", username: "sitti", pin: "1234", role: "Petugas" },
         { nama: "Novita Torey", username: "novita", pin: "1234", role: "Petugas" },
       ].map(async (a) => {
@@ -2755,6 +2761,22 @@ const Mod_auth = (function(){
     if (session && session.accountId === accountId) {
       Store.set(KEYS.SESSION, { ...session, nama: newNama });
     }
+  }
+  
+  function renameUsername(accountId, newUsername) {
+    const accounts = getAccounts();
+    const idx = accounts.findIndex((a) => a.id === accountId);
+    if (idx < 0) throw new Error("Akun tidak ditemukan.");
+    const trimmed = newUsername.trim();
+    if (!trimmed) throw new Error("Username tidak boleh kosong.");
+    if (accounts.some((a) => a.id !== accountId && a.username.toLowerCase() === trimmed.toLowerCase())) {
+      throw new Error("Username sudah dipakai akun lain.");
+    }
+    accounts[idx] = { ...accounts[idx], username: trimmed };
+    Store.set(KEYS.ACCOUNTS, accounts);
+    // Session hanya menyimpan accountId (bukan username) untuk login check berikutnya, jadi sesi
+    // yang sedang aktif tidak perlu diapa-apakan di sini - lain kali logout/login baru perlu
+    // pakai username barunya.
   }
   
   function setAccountActive(accountId, aktif) {
@@ -2826,7 +2848,7 @@ const Mod_auth = (function(){
     setInterval(check, 15000);
   }
   
-  return {getAccounts, seedDefaultAccounts, createAccount, resetPin, renameAccount, setAccountActive, login, getSession, getCurrentUserName, logout, lockSession, unlockSession, touchActivity, initInactivityWatcher};
+  return {getAccounts, seedDefaultAccounts, createAccount, resetPin, renameAccount, renameUsername, setAccountActive, login, getSession, getCurrentUserName, logout, lockSession, unlockSession, touchActivity, initInactivityWatcher};
 })();
 
 const Mod_router = (function(){
@@ -3817,6 +3839,20 @@ const Mod_views_mapView = (function(){
     return (m.promoLog || []).some((p) => p.promoId === promo.id || (!p.promoId && p.judul === promo.judul));
   }
   
+  // Batalkan tanda "Sudah dikirim" untuk 1 pelanggan+periode promo tertentu - dipakai kalau
+  // "Kirim WA"-nya cuma coba-coba/salah klik, bukan pengiriman promo yang sesungguhnya (permintaan
+  // Eva, 2026-07). Cukup buang entri promoLog yang cocok, tidak menyentuh riwayat probing lain.
+  function removePromoLog(idpel, promo) {
+    Store.update(KEYS.OPERASIONAL, (all) => {
+      const op = all[idpel];
+      if (!op) return all;
+      return {
+        ...all,
+        [idpel]: { ...op, promoLog: (op.promoLog || []).filter((p) => !(p.promoId === promo.id || (!p.promoId && p.judul === promo.judul))) },
+      };
+    }, {});
+  }
+  
   async function copyToClipboard(text) {
     try {
       await navigator.clipboard.writeText(text);
@@ -3882,32 +3918,61 @@ const Mod_views_mapView = (function(){
         </div>` : ""}
         <p class="small-muted" style="margin-top:10px;">Klik "Kirim WA" di tiap pelanggan untuk membuka WhatsApp dengan pesan yang sudah terisi otomatis - sama seperti tombol WhatsApp di halaman detail pelanggan. ${selectedPromo.brosurDataUrls.length ? "Lampirkan brosur yang sudah diunduh secara manual di WhatsApp sebelum kirim." : ""}</p>
         <ul class="list-plain" id="promoSendList" style="max-height:280px; overflow:auto;">
-          ${eligible.map((m) => {
-            const sent = alreadySentFor(m, selectedPromo);
-            return `
-            <li data-idpel="${m.idpel}">
-              <span>${escapeHtml(m.nama)} <span class="small-muted">(${m.idpel})</span></span>
-              ${sent
-                ? `<span class="status-pill st-tersambung">${icon("check")} Sudah dikirim</span>`
-                : `<a class="btn secondary sm waSendLink" target="_blank" rel="noopener" data-idpel="${m.idpel}" href="${waLinkFor(m, selectedPromo)}">${icon("whatsapp")} Kirim WA</a>`}
-            </li>`;
-          }).join("") || `<li class="small-muted">Tidak ada pelanggan dengan nomor telepon pada filter ini.</li>`}
+          ${eligible.map((m) => `<li data-idpel="${m.idpel}"><span>${escapeHtml(m.nama)} <span class="small-muted">(${m.idpel})</span></span></li>`).join("") || `<li class="small-muted">Tidak ada pelanggan dengan nomor telepon pada filter ini.</li>`}
         </ul>
       `;
       bodyEl.querySelector("#copyPromoMessageBtn").addEventListener("click", async () => {
         const ok = await copyToClipboard(personalizePesan(selectedPromo.pesan, ""));
         toast(ok ? "Pesan promo disalin (tanpa nama - nama otomatis terisi kalau kirim lewat tombol \"Kirim WA\")." : "Gagal menyalin - salin manual dari kotak teks di atas.", ok ? "ok" : "err");
       });
-      bodyEl.querySelectorAll(".waSendLink").forEach((linkEl) => {
-        linkEl.addEventListener("click", () => {
-          // Klik ini membuka WhatsApp di tab baru (perilaku bawaan tautan wa.me, dibiarkan
-          // berjalan) SEKALIGUS langsung mencatat pengiriman utk pelanggan ini - baris di daftar
-          // langsung berubah jadi "Sudah dikirim" tanpa perlu tombol tandai terpisah lagi.
-          logPromoSent([linkEl.dataset.idpel], selectedPromo);
-          const li = linkEl.closest("li");
-          li.innerHTML = `<span>${li.querySelector("span").innerHTML}</span><span class="status-pill st-tersambung">${icon("check")} Sudah dikirim</span>`;
-        });
-      });
+  
+      // Render/wire tiap baris pelanggan lewat 1 fungsi bersama supaya tombol "Kirim WA" <-> status
+      // "Sudah dikirim" + "batalkan" bisa bolak-balik tanpa duplikasi logika render.
+      function renderRow(m) {
+        const li = bodyEl.querySelector(`#promoSendList li[data-idpel="${m.idpel}"]`);
+        if (!li) return;
+        const sent = alreadySentFor(m, selectedPromo);
+        const nameSpan = li.querySelector("span");
+        li.innerHTML = "";
+        li.appendChild(nameSpan);
+        if (sent) {
+          const pill = document.createElement("span");
+          pill.className = "status-pill st-tersambung";
+          pill.innerHTML = `${icon("check")} Sudah dikirim`;
+          const undoBtn = document.createElement("button");
+          undoBtn.type = "button";
+          undoBtn.className = "link-btn undoSentBtn";
+          undoBtn.dataset.idpel = m.idpel;
+          undoBtn.title = "Batalkan tanda sudah dikirim - misalnya kalau tadi cuma coba-coba";
+          undoBtn.textContent = "batalkan";
+          undoBtn.addEventListener("click", () => {
+            removePromoLog(m.idpel, selectedPromo);
+            m.promoLog = (m.promoLog || []).filter((p) => !(p.promoId === selectedPromo.id || (!p.promoId && p.judul === selectedPromo.judul)));
+            renderRow(m);
+            toast(`Tanda "sudah dikirim" untuk ${m.nama} dibatalkan.`, "ok");
+          });
+          li.appendChild(pill);
+          li.appendChild(undoBtn);
+        } else {
+          const linkEl = document.createElement("a");
+          linkEl.className = "btn secondary sm waSendLink";
+          linkEl.target = "_blank";
+          linkEl.rel = "noopener";
+          linkEl.dataset.idpel = m.idpel;
+          linkEl.href = waLinkFor(m, selectedPromo);
+          linkEl.innerHTML = `${icon("whatsapp")} Kirim WA`;
+          linkEl.addEventListener("click", () => {
+            // Klik ini membuka WhatsApp di tab baru (perilaku bawaan tautan wa.me, dibiarkan
+            // berjalan) SEKALIGUS langsung mencatat pengiriman utk pelanggan ini - baris di daftar
+            // langsung berubah jadi "Sudah dikirim" tanpa perlu tombol tandai terpisah lagi.
+            logPromoSent([m.idpel], selectedPromo);
+            m.promoLog = [...(m.promoLog || []), { waktu: new Date().toISOString(), promoId: selectedPromo.id, judul: selectedPromo.judul }];
+            renderRow(m);
+          });
+          li.appendChild(linkEl);
+        }
+      }
+      eligible.forEach(renderRow);
     }
     renderCampaignBody();
   
@@ -4804,8 +4869,16 @@ const Mod_views_dashboard = (function(){
     const tinggiCount = filtered.filter((m) => m.subKategori === "Tinggi").length;
     const sedangCount = filtered.filter((m) => m.subKategori === "Sedang").length;
   
-    // funnel
-    const funnelStages = PIPELINE_MAIN.map((label, i) => ({ label, value: filtered.filter((m) => maxReachedIndex(m) >= i).length }));
+    // funnel - "value" tetap kumulatif (total yang sudah SAMPAI tahap ini ATAU LEBIH JAUH, dipakai
+    // untuk melihat keberhasilan keseluruhan pipeline), ditambah "current" = jumlah pelanggan yang
+    // status probing-nya PERSIS di tahap ini SEKARANG (tidak termasuk yang sudah lanjut ke tahap
+    // berikutnya) - permintaan Eva (2026-07) supaya kelihatan juga siapa yang sedang "nangkring"/
+    // perlu ditindaklanjuti di tiap tahap, bukan cuma total historisnya saja.
+    const funnelStages = PIPELINE_MAIN.map((label, i) => ({
+      label,
+      value: filtered.filter((m) => maxReachedIndex(m) >= i).length,
+      current: filtered.filter((m) => m.statusProbing === label).length,
+    }));
   
     // tren tambah daya kVA (last N months): target vs realisasi
     const monthsList = [];
@@ -4833,15 +4906,37 @@ const Mod_views_dashboard = (function(){
     });
     const topRute = Object.entries(ruteKVA).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([label, value]) => ({ label, value: Math.round(value * 10) / 10, display: `${Math.round(value * 10) / 10} kVA` }));
   
-    // performa per petugas
-    const petugasStats = petugasFilterOptions.map((p) => {
-      const own = filtered.filter((m) => m.petugas === p);
-      const kunjungan = own.reduce((s, m) => s + m.riwayatProbing.filter((r) => r.tahap === "Sudah Dikunjungi").length, 0);
-      const closed = own.filter((m) => ["Tersambung", "Ditolak"].includes(m.statusProbing));
-      const sukses = own.filter((m) => m.statusProbing === "Tersambung").length;
-      const rate = closed.length ? Math.round((sukses / closed.length) * 100) : 0;
-      return { petugas: p, kunjungan, sukses, total: own.length, rate };
-    }).filter((p) => p.total > 0).sort((a, b) => b.sukses - a.sukses);
+    // performa per petugas - dihitung PER TINDAKAN (setiap entri riwayatProbing punya field
+    // "petugas" sendiri = akun yang login saat tindakan itu dilakukan - lihat entry di
+    // customerDetail.js), BUKAN dari field "petugas" pelanggan yang "final" saja. Sebelumnya kode
+    // di sini mengelompokkan berdasarkan m.petugas pelanggan (yang untuk pelanggan yang BELUM
+    // PERNAH disentuh sama sekali masih berisi data master/RBM dari Data Identitas) lalu menjumlah
+    // SELURUH riwayat pelanggan itu ke satu nama tsb - jadi kalau 1 pelanggan sempat disentuh lebih
+    // dari satu akun (mis. dikunjungi oleh satu petugas, lalu ditutup ke Tersambung oleh akun lain),
+    // seluruh riwayatnya (termasuk kunjungan yang dilakukan akun pertama) salah tercatat sebagai
+    // performa akun yang TERAKHIR menyentuh, dan pelanggan yang masih "Belum Dikunjungi" (belum
+    // pernah ada entri riwayat sama sekali) bisa saja tetap muncul sebagai baris petugas kalau
+    // Data Identitas-nya kebetulan sudah terisi kolom Petugas master. Per permintaan Eva
+    // (2026-07): tabel ini harus murni berdasarkan siapa yang login saat tiap tindakan terjadi.
+    const petugasStatsMap = new Map();
+    filtered.forEach((m) => {
+      (m.riwayatProbing || []).forEach((r) => {
+        const actor = r.petugas;
+        if (!actor) return; // entri lama/tanpa petugas tercatat - tidak bisa diatribusikan, dilewati
+        if (!petugasStatsMap.has(actor)) petugasStatsMap.set(actor, { petugas: actor, kunjungan: 0, sukses: 0, ditolak: 0 });
+        const rec = petugasStatsMap.get(actor);
+        if (r.tahap === "Sudah Dikunjungi") rec.kunjungan++;
+        else if (r.tahap === "Tersambung") rec.sukses++;
+        else if (r.tahap === "Ditolak") rec.ditolak++;
+      });
+    });
+    const petugasStats = [...petugasStatsMap.values()]
+      .map((rec) => {
+        const closedCount = rec.sukses + rec.ditolak;
+        const rate = closedCount ? Math.round((rec.sukses / closedCount) * 100) : 0;
+        return { petugas: rec.petugas, kunjungan: rec.kunjungan, sukses: rec.sukses, rate };
+      })
+      .sort((a, b) => b.sukses - a.sukses);
   
     // aging / SLA
     const slaHari = settings.slaHari || 30;
@@ -4921,6 +5016,7 @@ const Mod_views_dashboard = (function(){
         <div class="grid-2" style="margin-top:10px;">
           <div class="card">
             <div class="card-title">Funnel Konversi</div>
+            <p class="small-muted" style="margin-top:-4px; margin-bottom:10px;">Angka besar tetap kumulatif (total yang SUDAH SAMPAI di tahap itu ATAU LEBIH JAUH, termasuk yang sudah Tersambung) - dipakai untuk melihat keberhasilan keseluruhan pipeline. Angka "· N saat ini" di sampingnya menunjukkan yang STATUSNYA PERSIS di tahap itu SEKARANG (belum lanjut) - dipakai untuk lihat siapa yang perlu ditindaklanjuti.</p>
             ${renderFunnel(funnelStages)}
           </div>
           <div class="card">
@@ -5244,7 +5340,7 @@ const Mod_views_settings = (function(){
   const {Store, KEYS} = Mod_store;
   const {DEFAULT_SETTINGS, buildCustomerModels, normalizePromoCampaign} = Mod_scoring;
   const {DEFAULT_COST_TABLE, COST_TABLE_LAST_UPDATED_DEFAULT} = Mod_costTable;
-  const {getAccounts, createAccount, resetPin, renameAccount, setAccountActive, getSession} = Mod_auth;
+  const {getAccounts, createAccount, resetPin, renameAccount, renameUsername, setAccountActive, getSession} = Mod_auth;
   const {formatDate, formatRupiah, escapeHtml, uid, compressImage} = Mod_format;
   const {toast, refreshShellHeader} = Mod_views_shell;
   
@@ -5426,7 +5522,7 @@ const Mod_views_settings = (function(){
               <div class="au">@${escapeHtml(a.username)} ${a.aktif ? "" : "· nonaktif"}</div>
             </div>
             <div class="flags">
-              ${isAdmin ? `<button class="link-btn renameBtn">ubah nama</button><button class="link-btn resetPinBtn">reset PIN</button><button class="link-btn toggleActiveBtn">${a.aktif ? "nonaktifkan" : "aktifkan"}</button>` : ""}
+              ${isAdmin ? `<button class="link-btn renameBtn">ubah nama</button><button class="link-btn renameUsernameBtn">ubah username</button><button class="link-btn resetPinBtn">reset PIN</button><button class="link-btn toggleActiveBtn">${a.aktif ? "nonaktifkan" : "aktifkan"}</button>` : ""}
             </div>
           </div>
         `).join("")}
@@ -5444,6 +5540,18 @@ const Mod_views_settings = (function(){
             renameAccount(id, trimmed);
             toast("Nama akun diperbarui.", "ok");
             refreshShellHeader(); // in case the renamed account is the one currently logged in
+            renderSettings(root);
+          } catch (e) { toast(e.message, "err"); }
+        });
+        rowEl.querySelector(".renameUsernameBtn")?.addEventListener("click", () => {
+          const acc = accounts.find((a) => a.id === id);
+          const newUsername = prompt("Username baru (dipakai untuk login):", acc?.username || "");
+          if (newUsername == null) return; // cancelled
+          const trimmed = newUsername.trim();
+          if (!trimmed) { toast("Username tidak boleh kosong.", "err"); return; }
+          try {
+            renameUsername(id, trimmed);
+            toast(`Username diperbarui jadi "${trimmed}". Dipakai mulai login berikutnya.`, "ok");
             renderSettings(root);
           } catch (e) { toast(e.message, "err"); }
         });
